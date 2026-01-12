@@ -1,0 +1,7 @@
+node_modules/
+logs/
+screens/
+tmpclaude-*/
+.env
+*.log
+*.png
