@@ -3,69 +3,188 @@
  * Includes CAPTCHA avoidance measures
  */
 const fs = require('fs');
+const http = require('http');
 const playwright = require('playwright');
-const { log } = require('./util.js');
+const { log, sleep } = require('./util.js');
 
 // Default CDP endpoint for Chrome with remote debugging
-const DEFAULT_CDP_ENDPOINT = 'http://localhost:9222';
+// IMPORTANT: Use 127.0.0.1 instead of localhost to avoid IPv6 ::1 resolution issues
+const DEFAULT_CDP_ENDPOINT = 'http://127.0.0.1:9222';
+
+/**
+ * Verify that the CDP endpoint is listening by fetching /json/version
+ * @param {string} cdpEndpoint - The CDP endpoint URL (e.g., http://127.0.0.1:9222)
+ * @returns {Promise<{success: boolean, data?: Object, error?: string}>}
+ */
+async function verifyCdpEndpoint(cdpEndpoint) {
+  return new Promise((resolve) => {
+    const versionUrl = `${cdpEndpoint}/json/version`;
+    log('DEBUG', `Verifying CDP endpoint: ${versionUrl}`);
+
+    const timeoutMs = 5000;
+    const req = http.get(versionUrl, { timeout: timeoutMs }, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            const json = JSON.parse(data);
+            log('DEBUG', `CDP version info: Browser=${json.Browser || 'unknown'}`);
+            resolve({ success: true, data: json });
+          } catch {
+            resolve({ success: true, data: null });
+          }
+        } else {
+          resolve({ success: false, error: `HTTP ${res.statusCode}` });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      resolve({ success: false, error: err.message });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ success: false, error: 'Connection timed out' });
+    });
+  });
+}
+
+/**
+ * Log actionable instructions for launching Chrome with remote debugging
+ */
+function logChromeInstructions() {
+  log('INFO', '');
+  log('INFO', '=== CHROME DEBUG MODE NOT DETECTED ===');
+  log('INFO', '');
+  log('INFO', 'To launch Chrome with remote debugging:');
+  log('INFO', '');
+  log('INFO', '  1. Close ALL Chrome windows completely');
+  log('INFO', '');
+  log('INFO', '  2. Run ONE of these commands in a terminal:');
+  log('INFO', '');
+  log('INFO', '     Windows (CMD):');
+  log('INFO', '       "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%USERPROFILE%\\ChromeDebug"');
+  log('INFO', '');
+  log('INFO', '     Windows (PowerShell):');
+  log('INFO', '       & "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\\ChromeDebug"');
+  log('INFO', '');
+  log('INFO', '     Or use the provided batch file:');
+  log('INFO', '       1-launch-chrome.bat');
+  log('INFO', '');
+  log('INFO', '  3. Navigate to https://merch.riotgames.com and sign in');
+  log('INFO', '');
+  log('INFO', '  4. Run this bot again');
+  log('INFO', '');
+  log('INFO', 'NOTE: The --user-data-dir flag is REQUIRED for --remote-debugging-port to work.');
+  log('INFO', '===========================================');
+  log('INFO', '');
+}
 
 /**
  * Connect to an existing Chrome browser via CDP (Chrome DevTools Protocol)
- * User must launch Chrome with: chrome.exe --remote-debugging-port=9222
+ * User must launch Chrome with: chrome.exe --remote-debugging-port=9222 --user-data-dir=...
+ * 
+ * This function:
+ * 1. Uses 127.0.0.1 by default (never localhost to avoid IPv6 ::1 issues)
+ * 2. Verifies the endpoint is listening before connecting
+ * 3. Retries with exponential backoff if connection fails
+ * 4. Logs actionable instructions if Chrome is not running in debug mode
+ * 
  * @param {Object} config - Configuration object
  * @returns {Promise<{browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page}>}
  */
 async function connectToExistingChrome(config) {
-  const cdpEndpoint = config.CDP_ENDPOINT || DEFAULT_CDP_ENDPOINT;
+  let cdpEndpoint = config.CDP_ENDPOINT || DEFAULT_CDP_ENDPOINT;
+
+  // Ensure we're using 127.0.0.1 instead of localhost to avoid IPv6 issues
+  if (cdpEndpoint.includes('localhost')) {
+    const fixedEndpoint = cdpEndpoint.replace('localhost', '127.0.0.1');
+    log('WARN', `CDP_ENDPOINT uses "localhost" which may resolve to IPv6 ::1`);
+    log('INFO', `Rewriting to: ${fixedEndpoint}`);
+    cdpEndpoint = fixedEndpoint;
+  }
 
   log('INFO', `Connecting to existing Chrome at ${cdpEndpoint}...`);
 
-  try {
-    const browser = await playwright.chromium.connectOverCDP(cdpEndpoint);
-    log('OK', 'Connected to existing Chrome browser');
+  const maxRetries = config.MAX_RETRIES || 3;
+  const backoffs = [500, 1000, 2000, 4000, 8000]; // Exponential backoff delays
 
-    // Get the default context (the one the user is using)
-    const contexts = browser.contexts();
-    let context;
-    let page;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Step 1: Verify the CDP endpoint is listening
+    log('INFO', `[Attempt ${attempt}/${maxRetries}] Verifying CDP endpoint...`);
+    const verification = await verifyCdpEndpoint(cdpEndpoint);
 
-    if (contexts.length > 0) {
-      context = contexts[0];
-      const pages = context.pages();
+    if (!verification.success) {
+      log('WARN', `CDP endpoint not responding: ${verification.error}`);
 
-      // Find the Riot Merch page if it exists
-      page = pages.find(p => p.url().includes('merch.riotgames.com'));
-
-      if (page) {
-        log('OK', 'Found existing Riot Merch tab');
-      } else if (pages.length > 0) {
-        // Use the first available page
-        page = pages[0];
-        log('INFO', `Using existing tab: ${page.url()}`);
-      } else {
-        // Create a new page
-        page = await context.newPage();
-        log('INFO', 'Created new tab in existing browser');
+      if (attempt === maxRetries) {
+        logChromeInstructions();
+        throw new Error(`CDP endpoint not available at ${cdpEndpoint}: ${verification.error}`);
       }
-    } else {
-      // Create new context and page
-      context = await browser.newContext();
-      page = await context.newPage();
-      log('INFO', 'Created new context and tab');
+
+      const delay = backoffs[attempt - 1] || backoffs[backoffs.length - 1];
+      log('INFO', `Retrying in ${delay}ms...`);
+      await sleep(delay);
+      continue;
     }
 
-    return { browser, context, page };
-  } catch (err) {
-    log('ERROR', `Failed to connect to Chrome: ${err.message}`);
-    log('INFO', '');
-    log('INFO', 'Make sure Chrome is running with remote debugging:');
-    log('INFO', '  1. Close all Chrome windows');
-    log('INFO', '  2. Run: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222');
-    log('INFO', '  3. Navigate to merch.riotgames.com and sign in');
-    log('INFO', '  4. Run this bot again');
-    log('INFO', '');
-    throw err;
+    log('OK', 'CDP endpoint verified - Chrome is listening');
+
+    // Step 2: Connect via CDP
+    try {
+      const browser = await playwright.chromium.connectOverCDP(cdpEndpoint);
+      log('OK', 'Connected to existing Chrome browser via CDP');
+
+      // Get the default context (the one the user is using)
+      const contexts = browser.contexts();
+      let context;
+      let page;
+
+      if (contexts.length > 0) {
+        context = contexts[0];
+        const pages = context.pages();
+
+        // Find the Riot Merch page if it exists
+        page = pages.find(p => p.url().includes('merch.riotgames.com'));
+
+        if (page) {
+          log('OK', 'Found existing Riot Merch tab');
+        } else if (pages.length > 0) {
+          // Use the first available page
+          page = pages[0];
+          log('INFO', `Using existing tab: ${page.url()}`);
+        } else {
+          // Create a new page
+          page = await context.newPage();
+          log('INFO', 'Created new tab in existing browser');
+        }
+      } else {
+        // Create new context and page
+        context = await browser.newContext();
+        page = await context.newPage();
+        log('INFO', 'Created new context and tab');
+      }
+
+      return { browser, context, page };
+    } catch (err) {
+      log('WARN', `CDP connection failed: ${err.message}`);
+
+      if (attempt === maxRetries) {
+        log('ERROR', `Failed to connect to Chrome after ${maxRetries} attempts`);
+        logChromeInstructions();
+        throw err;
+      }
+
+      const delay = backoffs[attempt - 1] || backoffs[backoffs.length - 1];
+      log('INFO', `Retrying in ${delay}ms...`);
+      await sleep(delay);
+    }
   }
+
+  // Should not reach here, but just in case
+  throw new Error('CDP connection failed after all retries');
 }
 
 /**

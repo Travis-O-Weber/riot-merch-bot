@@ -73,7 +73,7 @@ const config = {
   // Connect to existing Chrome (user signs in manually first)
   // Launch Chrome with: chrome.exe --remote-debugging-port=9222
   CONNECT_EXISTING: getBoolean('CONNECT_EXISTING', false),
-  CDP_ENDPOINT: getString('CDP_ENDPOINT', 'http://localhost:9222'),
+  CDP_ENDPOINT: getString('CDP_ENDPOINT', 'http://127.0.0.1:9222'),
 
   BRAVE_PATH: getString('BRAVE_PATH', 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'),
   USER_DATA_DIR: getString('USER_DATA_DIR', ''),
