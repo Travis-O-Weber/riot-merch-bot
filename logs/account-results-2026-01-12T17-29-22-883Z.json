@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-01-12T17:29:22.883Z",
+  "totalAccounts": 3,
+  "successful": 0,
+  "failed": 3,
+  "outOfStock": 0,
+  "limitReached": 0,
+  "results": [
+    {
+      "index": 0,
+      "username": "*****ar11",
+      "status": "error",
+      "message": "Sign in failed",
+      "timestamp": "2026-01-12T17:29:13.157Z"
+    },
+    {
+      "index": 1,
+      "username": "****uuzo",
+      "status": "error",
+      "message": "Sign in failed",
+      "timestamp": "2026-01-12T17:29:22.877Z"
+    },
+    {
+      "index": 2,
+      "username": "********eryl",
+      "status": "error",
+      "message": "page.goto: Target page, context or browser has been closed",
+      "timestamp": "2026-01-12T17:29:22.878Z"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-01-12T21:44:47.052Z",
+  "totalAccounts": 3,
+  "successful": 0,
+  "failed": 3,
+  "outOfStock": 0,
+  "limitReached": 0,
+  "results": [
+    {
+      "index": 0,
+      "username": "*****ar11",
+      "status": "error",
+      "message": "Sign in failed",
+      "timestamp": "2026-01-12T21:42:55.571Z"
+    },
+    {
+      "index": 1,
+      "username": "****uuzo",
+      "status": "error",
+      "message": "Sign in failed",
+      "timestamp": "2026-01-12T21:44:16.629Z"
+    },
+    {
+      "index": 2,
+      "username": "********eryl",
+      "status": "error",
+      "message": "Sign in failed",
+      "timestamp": "2026-01-12T21:44:46.587Z"
+    }
+  ]
+}
