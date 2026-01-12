@@ -1,23 +1,50 @@
 {
   "branchName": "ralph/riot-merch-self-heal",
   "projectName": "riot-merch-bot",
-  "objective": "Make the Riot Merch purchasing bot fully autonomous and self-healing for the target item, using account rotation and non-URL navigation.",
+  "objective": "Stabilize and harden the Riot Merch automation bot so it can reliably reach the final order review page for the target product using non-URL navigation, cookie acceptance, CDP-connected real browser sessions, and multi-account rotation (1 per account).",
+  "contextFromProjectLog": [
+    "Automated Riot sign-in is blocked by bot detection; CDP connect-to-existing-browser is the intended solution.",
+    "CDP connection has failed with ECONNREFUSED and IPv6 ::1 in the past.",
+    "Multi-account browser crashes were fixed using fresh contexts per account and browser health checks.",
+    "The codebase already includes fuzzy matching, retries, screenshots, and mode flags."
+  ],
   "constraints": [
-    "Never hardcode product URLs; navigate via visible text, search, and page discovery.",
-    "Accept cookies early so cart and checkout buttons appear.",
-    "Must be signed in before add-to-cart; must sign out after checkout (or after final confirmation step).",
-    "One item per account; rotate multiple Riot accounts in a single run from .env.",
+    "Never hardcode product URLs; navigation must use visible text, search, and page discovery.",
+    "Must accept cookie banners early so cart and checkout buttons appear.",
+    "Must be signed in before add-to-cart; must sign out after checkout attempt.",
+    "One target item per account; rotate multiple Riot accounts in one run.",
     "Skip any blank .env fields and never overwrite site defaults.",
     "Avoid brittle deep DOM selectors; use multi-fallback strategies.",
-    "Auto-retry with backoff; capture screenshot and logs on every failure.",
+    "Auto-retry with exponential backoff; screenshot and log for every failure.",
     "Never block waiting for user input.",
-    "Prefer CDP connect-to-existing-browser mode for Riot-authenticated sessions."
+    "Prefer CDP connect-to-existing-browser mode for Riot-authenticated sessions.",
+    "Default behavior must never place a real order. Success is reaching the final review/confirmation page and stopping before the final purchase action. The final purchase/confirm button must only be clicked when FULL_SEND=1."
   ],
   "envSpec": {
-    "accounts": "RIOT_USER_1/RIOT_PASS_1 ... RIOT_USER_N/RIOT_PASS_N (skip blanks).",
-    "targetProduct": "PRODUCT1 (supports synonyms separated by |) and QTY1.",
-    "connectExisting": "CONNECT_EXISTING=1 and CDP_ENDPOINT=http://127.0.0.1:9222",
-    "safetyModes": "DRY_RUN, CHECKOUT_ENABLED, FULL_SEND, KEEP_OPEN must be respected."
+    "modes": [
+      "DRY_RUN=0/1",
+      "CHECKOUT_ENABLED=0/1",
+      "FULL_SEND=0/1 (default 0; only when 1 may the bot click final confirm/purchase)",
+      "KEEP_OPEN=0/1",
+      "HEADLESS=0/1"
+    ],
+    "cdp": [
+      "CONNECT_EXISTING=1",
+      "CDP_ENDPOINT=http://127.0.0.1:9222 (never localhost to avoid ::1)"
+    ],
+    "products": [
+      "PRODUCT1 supports synonyms separated by |",
+      "QTY1 default 1",
+      "FUZZY_THRESHOLD configurable"
+    ],
+    "reliability": [
+      "NAV_TIMEOUT_MS",
+      "ACTION_TIMEOUT_MS",
+      "MAX_RETRIES"
+    ],
+    "accounts": [
+      "RIOT_USER_1/RIOT_PASS_1 ... RIOT_USER_N/RIOT_PASS_N (skip blanks)"
+    ]
   },
   "qualityChecks": [
     "npm test",
@@ -28,90 +55,102 @@
     {
       "id": "S1",
       "priority": 1,
-      "title": "Fix CDP connection reliability (avoid ECONNREFUSED and IPv6 loopback issues)",
+      "title": "Make CDP connect mode reliable (fix ECONNREFUSED, IPv6 ::1, and ensure debug port is actually listening)",
       "passes": false,
       "acceptanceCriteria": [
-        "Bot connects when Chrome is started with --remote-debugging-port and a dedicated user-data-dir.",
-        "CDP endpoint defaults to 127.0.0.1 (never ::1 or localhost).",
-        "Bot verifies the CDP endpoint via /json/version before connecting.",
-        "Connection failures produce actionable logs and screenshots if a page exists."
+        "CDP endpoint defaults to http://127.0.0.1:<port> and never resolves to ::1.",
+        "Bot verifies http://127.0.0.1:<port>/json/version before connecting.",
+        "If verification fails, bot logs actionable instructions to relaunch Chrome with --remote-debugging-port and --user-data-dir.",
+        "Connection retries respect MAX_RETRIES and use exponential backoff."
       ]
     },
     {
       "id": "S2",
       "priority": 2,
-      "title": "Cookie consent must be accepted early so cart/checkout buttons appear",
+      "title": "Add WebSocket debugger URL fallback for CDP",
       "passes": false,
       "acceptanceCriteria": [
-        "Cookie banner is handled on first navigation.",
-        "Cookie acceptance is idempotent.",
-        "Failure includes selector attempts and a screenshot."
+        "Bot extracts webSocketDebuggerUrl from /json/version if HTTP CDP fails.",
+        "Logs indicate whether HTTP or WebSocket CDP was used.",
+        "Failure produces screenshot and step name."
       ]
     },
     {
       "id": "S3",
       "priority": 3,
-      "title": "Robust signed-in detection and account state management",
+      "title": "Cookie consent must be idempotent and unblock cart/checkout",
       "passes": false,
       "acceptanceCriteria": [
-        "When CONNECT_EXISTING=1, bot verifies signed-in state.",
-        "If not signed in, bot logs clear failure and stops safely.",
-        "Bot never attempts automated Riot credential entry unless explicitly enabled."
+        "Cookie banner is accepted early using multiple fallback selectors.",
+        "Repeated calls do not break navigation.",
+        "Failure logs include selector attempts and screenshot."
       ]
     },
     {
       "id": "S4",
       "priority": 4,
-      "title": "Product discovery without URLs using fuzzy title match",
+      "title": "Signed-in state detection in CONNECT_EXISTING mode",
       "passes": false,
       "acceptanceCriteria": [
-        "Bot finds product by matching PRODUCT1 against visible titles.",
-        "Supports pagination, infinite scroll, and lazy loading.",
-        "Logs top match candidates when failing."
+        "Bot detects signed-in state via account UI vs 'Sign In'.",
+        "If not signed in, bot stops safely with clear error and screenshot.",
+        "No manual input is ever requested."
       ]
     },
     {
       "id": "S5",
       "priority": 5,
-      "title": "Add-to-cart with resilient button detection and quantity enforcement",
+      "title": "Product discovery without URLs using fuzzy title matching",
       "passes": false,
       "acceptanceCriteria": [
-        "Multiple fallback strategies locate Add to Cart / Buy / Preorder.",
-        "QTY1 is enforced and one-per-account limits detected.",
-        "Limit or OOS moves to next account."
+        "Bot finds PRODUCT1 via visible titles (case-insensitive + fuzzy).",
+        "Supports scrolling and pagination.",
+        "On failure, logs top 5 candidate matches with scores and screenshot."
       ]
     },
     {
       "id": "S6",
       "priority": 6,
-      "title": "Checkout flow respects DISCOUNT_CODE and skips blank env fields",
+      "title": "Add-to-cart with resilient button detection and quantity enforcement",
       "passes": false,
       "acceptanceCriteria": [
-        "Blank DISCOUNT_CODE is ignored.",
-        "Blank env fields do not overwrite existing site values.",
-        "Checkout reaches confirmation step in safe mode."
+        "Multiple fallback strategies locate Add to Cart / Buy / Preorder.",
+        "QTY1 is enforced and 1-per-account limits are detected.",
+        "Limit or out-of-stock moves to next account."
       ]
     },
     {
       "id": "S7",
       "priority": 7,
-      "title": "Multi-account rotation in a single execution",
+      "title": "Checkout flow respects DISCOUNT_CODE and safe-stop rules",
       "passes": false,
       "acceptanceCriteria": [
-        "Iterates RIOT_USER_1/PASS_1 ... RIOT_USER_N/PASS_N skipping blanks.",
-        "For each account: verify login → attempt purchase → sign out → continue.",
-        "Browser resets cleanly if unhealthy."
+        "Blank DISCOUNT_CODE is ignored.",
+        "Blank env fields do not overwrite existing values.",
+        "When FULL_SEND=0, bot must stop at final review page and log SAFE_STOP_BEFORE_PURCHASE.",
+        "Bot must never click final confirm unless FULL_SEND=1."
       ]
     },
     {
       "id": "S8",
       "priority": 8,
-      "title": "Unified failure artifacts: screenshots + logs with account and step name",
+      "title": "Multi-account rotation in a single execution",
       "passes": false,
       "acceptanceCriteria": [
-        "All failures include account index, step name, URL, and error.",
-        "Screenshot filenames include account and step.",
-        "Logs are timestamped per run."
+        "Iterates RIOT_USER_1..N skipping blanks.",
+        "For each account: verify signed-in → attempt flow → sign out → continue.",
+        "Browser reinitializes cleanly if unhealthy."
+      ]
+    },
+    {
+      "id": "S9",
+      "priority": 9,
+      "title": "Unified failure artifacts: screenshots and logs",
+      "passes": false,
+      "acceptanceCriteria": [
+        "Every failure logs account index, step name, URL, and error.",
+        "Screenshot filenames include timestamp, account index, and step.",
+        "Logs are written to a predictable run folder."
       ]
     }
   ]
