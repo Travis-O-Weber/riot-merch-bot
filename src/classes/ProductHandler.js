@@ -1,7 +1,8 @@
 /**
  * Product Handler - Discovers products and adds to cart
  */
-const { log, withRetry, captureScreenshot, sleep, fuzzyMatch, clickWithFallback } = require('../util.js');
+const { log, withRetry, captureScreenshot, sleep, fuzzyMatch, clickWithFallback, normalizeText } = require('../util.js');
+const stringSimilarity = require('string-similarity');
 
 class ProductHandler {
   /**
@@ -279,11 +280,14 @@ class ProductHandler {
 
     if (!cards) {
       log('WARN', 'No product cards found on page');
+      await captureScreenshot(this.page, 'product-search-no-cards');
       return null;
     }
 
-    // Check each card for fuzzy match
+    // Collect all candidates with scores for logging on failure
+    const candidates = [];
     const count = await cards.count();
+    
     for (let i = 0; i < count; i++) {
       const card = cards.nth(i);
       try {
@@ -291,7 +295,17 @@ class ProductHandler {
         const titleText = await this._getProductTitle(card);
         if (!titleText) continue;
 
-        // Fuzzy match
+        // Calculate best match score against all target names
+        const matchResult = this._calculateBestMatchScore(titleText, productNames);
+        candidates.push({
+          index: i,
+          title: titleText,
+          score: matchResult.score,
+          matchedAgainst: matchResult.matchedAgainst,
+          card
+        });
+
+        // Check if this matches using fuzzyMatch (includes contains matching etc)
         const match = fuzzyMatch(titleText, productNames, this.config.FUZZY_THRESHOLD);
         if (match.matched) {
           log('OK', `Found product: "${titleText}" (score: ${match.score.toFixed(2)}, matched: "${match.matchedName}")`);
@@ -302,8 +316,89 @@ class ProductHandler {
       }
     }
 
-    log('WARN', `Product not found in ${count} cards`);
+    // Product not found - log top 5 candidates for debugging
+    await this._logTopCandidates(productNames, candidates, 5);
     return null;
+  }
+
+  /**
+   * Calculate the best match score for a product title against target names
+   * @param {string} productTitle - The product title from the page
+   * @param {string[]} targetNames - Target names/synonyms to match against
+   * @returns {{score: number, matchedAgainst: string}}
+   */
+  _calculateBestMatchScore(productTitle, targetNames) {
+    const normalizedProduct = normalizeText(productTitle);
+    let bestScore = 0;
+    let matchedAgainst = targetNames[0] || '';
+
+    for (const target of targetNames) {
+      const normalizedTarget = normalizeText(target);
+
+      // Exact match
+      if (normalizedProduct === normalizedTarget) {
+        return { score: 1.0, matchedAgainst: target };
+      }
+
+      // Contains match - high score
+      if (normalizedProduct.includes(normalizedTarget)) {
+        const score = 0.9;
+        if (score > bestScore) {
+          bestScore = score;
+          matchedAgainst = target;
+        }
+        continue;
+      }
+
+      if (normalizedTarget.includes(normalizedProduct)) {
+        const score = 0.85;
+        if (score > bestScore) {
+          bestScore = score;
+          matchedAgainst = target;
+        }
+        continue;
+      }
+
+      // String similarity score
+      const score = stringSimilarity.compareTwoStrings(normalizedProduct, normalizedTarget);
+      if (score > bestScore) {
+        bestScore = score;
+        matchedAgainst = target;
+      }
+    }
+
+    return { score: bestScore, matchedAgainst };
+  }
+
+  /**
+   * Log top N candidate matches for debugging failed product search
+   * @param {string[]} targetNames - What we were searching for
+   * @param {Array<{index: number, title: string, score: number, matchedAgainst: string}>} candidates
+   * @param {number} topN - Number of top candidates to log
+   */
+  async _logTopCandidates(targetNames, candidates, topN = 5) {
+    log('WARN', `Product not found. Searched for: "${targetNames.join(' | ')}"`);
+    log('WARN', `Fuzzy threshold: ${this.config.FUZZY_THRESHOLD}`);
+
+    if (candidates.length === 0) {
+      log('WARN', 'No product titles could be extracted from cards');
+      await captureScreenshot(this.page, 'product-search-failed-no-titles');
+      return;
+    }
+
+    // Sort by score descending and take top N
+    const topCandidates = [...candidates]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topN);
+
+    log('INFO', `Top ${topCandidates.length} candidate matches:`);
+    for (let i = 0; i < topCandidates.length; i++) {
+      const c = topCandidates[i];
+      log('INFO', `  ${i + 1}. "${c.title}" (score: ${c.score.toFixed(3)} vs "${c.matchedAgainst}")`);
+    }
+
+    // Take screenshot for debugging
+    await captureScreenshot(this.page, 'product-search-failed-with-candidates');
   }
 
   /**
