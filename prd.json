@@ -112,7 +112,7 @@
       "id": "S6",
       "priority": 6,
       "title": "Add-to-cart with resilient button detection and quantity enforcement",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Multiple fallback strategies locate Add to Cart / Buy / Preorder.",
         "QTY1 is enforced and 1-per-account limits are detected.",

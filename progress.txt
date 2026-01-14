@@ -7,6 +7,9 @@
 - Cookie consent handling is in NavigationManager.handleCookieConsent() - idempotent (tracks `_cookieConsentHandled`)
 - Sign-in detection uses AccountManager.isSignedInDetailed() with 5 strategies; verifySignedInOrFail() for safe error handling
 - Product discovery uses fuzzyMatch() from util.js; on failure, _logTopCandidates() logs top 5 matches with scores
+- Add-to-cart uses structured results: `{success, status: 'success'|'limit_reached'|'out_of_stock'|'error', message}`
+- Preorder buttons supported via selectors: preorder(), preorderFallback1-3()
+- Purchase limit detection via _checkForPurchaseLimit() with regex patterns for various limit messages
 
 ---
 
@@ -93,4 +96,26 @@ Thread: https://ampcode.com/threads/T-019bbae0-ebb9-7756-b41e-410f63d67675
   - Key gap was logging candidates on failure - always log what was found vs. what was searched
   - Use stringSimilarity.compareTwoStrings() directly when calculating numeric scores
   - Screenshots on failure are essential for debugging product discovery issues
+---
+
+## 2026-01-14T05:10:00Z - S6
+Thread: https://ampcode.com/threads/T-019bbae4-d348-71d0-b997-b2423e6469eb
+- Implemented resilient add-to-cart with multiple fallback button strategies
+- Added Preorder button selectors (preorder, preorderFallback1-3) to selectors.js
+- Refactored _clickAddToCart() to support Add to Cart, Buy Now, and Preorder buttons
+- Added _checkForPurchaseLimit() with regex patterns to detect 1-per-account limits
+- Added _verifyItemAdded() to confirm successful cart addition via drawer/notification
+- Added purchase limit selectors (purchaseLimitFallback3-4, quantityLimitMessage, etc.)
+- Added success confirmation selectors (addedToCartConfirmation, etc.)
+- Updated processAllProducts() to return structured results with status per product
+- Updated RiotMerchBot._runProductFlow() to log individual product results
+- Files changed:
+  - src/selectors.js (added preorder and limit detection selectors)
+  - src/classes/ProductHandler.js (structured results, limit detection, preorder support)
+  - src/classes/RiotMerchBot.js (handle structured product results)
+- **Learnings for future iterations:**
+  - Use structured return values for add-to-cart: {success, status, message}
+  - Don't retry on limit_reached or out_of_stock - only retry on transient errors
+  - Regex patterns for limit detection: /limit(ed)?\s*(to|of|reached|per)/i, etc.
+  - Preorder buttons common for upcoming releases - must be in fallback chain
 ---
