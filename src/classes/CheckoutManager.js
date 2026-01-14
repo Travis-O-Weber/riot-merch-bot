@@ -1,7 +1,7 @@
 /**
  * Checkout Manager - Orchestrates the checkout flow
  */
-const { log, withRetry, captureScreenshot, sleep } = require('../util.js');
+const { log, withRetry, captureScreenshot, captureFailure, sleep } = require('../util.js');
 const FormFiller = require('./FormFiller.js');
 
 class CheckoutManager {
@@ -75,8 +75,7 @@ class CheckoutManager {
       return await this._reviewAndPlaceOrder();
 
     } catch (err) {
-      log('ERROR', `Checkout failed: ${err.message}`);
-      await captureScreenshot(this.page, 'checkout-error');
+      await captureFailure(this.page, 'checkout', err);
       return false;
     }
   }

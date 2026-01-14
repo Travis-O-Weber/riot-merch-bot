@@ -2,7 +2,7 @@
  * Account Manager - Handles Riot account sign-in/sign-out operations
  * Required for multi-account purchasing where each account has purchase limits
  */
-const { log, withRetry, captureScreenshot, sleep, maskSensitive } = require('../util.js');
+const { log, withRetry, captureScreenshot, captureFailure, sleep, maskSensitive } = require('../util.js');
 
 class AccountManager {
   /**
@@ -232,8 +232,8 @@ class AccountManager {
     log('ERROR', 'The bot will NOT wait for manual sign-in or request any input.');
     log('ERROR', '===========================================');
 
-    // Take screenshot with clear naming
-    await captureScreenshot(this.page, 'error-not-signed-in-connect-mode');
+    // Capture failure with unified logging
+    await captureFailure(this.page, 'verify-signed-in', errorMsg);
 
     return { success: false, error: errorMsg };
   }

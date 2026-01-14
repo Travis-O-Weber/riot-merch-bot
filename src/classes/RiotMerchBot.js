@@ -3,7 +3,7 @@
  * Self-healing web automation bot for Riot Games merchandise store
  * Supports CONNECT mode: connects to your existing Chrome browser (you sign in manually)
  */
-const { log, captureScreenshot, sleep } = require('../util.js');
+const { log, captureScreenshot, captureFailure, sleep, initRunContext, setAccountContext, saveAccountResults } = require('../util.js');
 const { getSelectors } = require('../selectors.js');
 const { connectToExistingChrome, launchBraveOrFallback, isBrowserAlive, closeBrowser } = require('../brave.js');
 const NavigationManager = require('./NavigationManager.js');
@@ -41,6 +41,10 @@ class RiotMerchBot {
     log('INFO', '===========================================');
     log('INFO', '     RIOT MERCH BOT - STARTING');
     log('INFO', '===========================================');
+    
+    // Initialize run context for unified artifacts (logs/screenshots per run)
+    initRunContext();
+    
     this._logConfig();
 
     try {
@@ -89,9 +93,10 @@ class RiotMerchBot {
       }
 
     } catch (err) {
-      log('ERROR', `Bot failed: ${err.message}`);
       if (this.page && await isBrowserAlive(this.page)) {
-        await captureScreenshot(this.page, 'fatal-error');
+        await captureFailure(this.page, 'fatal-error', err);
+      } else {
+        log('ERROR', `Bot failed: ${err.message}`);
       }
       throw err;
     } finally {
@@ -153,6 +158,7 @@ class RiotMerchBot {
       }
 
       this.account.setCurrentAccountIndex(i);
+      setAccountContext(i);  // Set account context for unified failure artifacts
       const maskedUser = this.account.getMaskedUsername();
 
       log('INFO', '');
@@ -226,6 +232,9 @@ class RiotMerchBot {
         const statusIcon = r.status === 'success' ? '✓' : '✗';
         log('INFO', `  [${statusIcon}] Account ${r.index + 1} (${r.username}): ${r.status} - ${r.message}`);
       }
+      
+      // Save account results to run folder
+      saveAccountResults(results);
     }
   }
 

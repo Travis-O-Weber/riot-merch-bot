@@ -12,9 +12,64 @@ const stringSimilarity = require('string-similarity');
 const SS_DIR = path.join(__dirname, '..', 'screens');
 const LOG_DIR = path.join(__dirname, '..', 'logs');
 
-// Ensure directories exist
+// Ensure base directories exist
 if (!fs.existsSync(SS_DIR)) fs.mkdirSync(SS_DIR, { recursive: true });
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+
+// Run context - set once at bot startup, used for unified artifacts
+let _runContext = {
+  runId: null,
+  runDir: null,
+  startTime: null,
+  accountIndex: -1  // -1 = no account context
+};
+
+/**
+ * Initialize run context for unified failure artifacts
+ * Creates a run-specific folder: logs/run_YYYY-MM-DDTHH-MM-SS/
+ * @returns {{runId: string, runDir: string, startTime: string}}
+ */
+function initRunContext() {
+  const now = new Date();
+  const runId = now.toISOString().replace(/[:.]/g, '-');
+  const runDir = path.join(LOG_DIR, `run_${runId}`);
+  
+  fs.mkdirSync(runDir, { recursive: true });
+  
+  _runContext = {
+    runId,
+    runDir,
+    startTime: now.toISOString(),
+    accountIndex: -1
+  };
+  
+  log('INFO', `Run artifacts folder: ${runDir}`);
+  return { runId, runDir, startTime: _runContext.startTime };
+}
+
+/**
+ * Get current run context
+ * @returns {{runId: string|null, runDir: string|null, startTime: string|null, accountIndex: number}}
+ */
+function getRunContext() {
+  return { ..._runContext };
+}
+
+/**
+ * Set current account index for failure context
+ * @param {number} index - Account index (0-based), -1 for no account context
+ */
+function setAccountContext(index) {
+  _runContext.accountIndex = index;
+}
+
+/**
+ * Get current account index
+ * @returns {number}
+ */
+function getAccountContext() {
+  return _runContext.accountIndex;
+}
 
 /**
  * Log message with timestamp and level
@@ -26,9 +81,47 @@ function log(level, message) {
   const logLine = `[${timestamp}] ${level.padEnd(5)} ${message}`;
   console.log(logLine);
 
-  // Also write to log file
-  const logFile = path.join(LOG_DIR, `${new Date().toISOString().split('T')[0]}.log`);
-  fs.appendFileSync(logFile, logLine + '\n');
+  // Write to daily log file
+  const dailyLogFile = path.join(LOG_DIR, `${new Date().toISOString().split('T')[0]}.log`);
+  fs.appendFileSync(dailyLogFile, logLine + '\n');
+
+  // Also write to run-specific log if run context exists
+  if (_runContext.runDir) {
+    const runLogFile = path.join(_runContext.runDir, 'run.log');
+    fs.appendFileSync(runLogFile, logLine + '\n');
+  }
+}
+
+/**
+ * Log a failure with full context (account index, step, URL, error)
+ * @param {string} step - Current step name
+ * @param {string} url - Current page URL
+ * @param {Error|string} error - Error object or message
+ * @param {Object} options - Additional options
+ * @param {number} options.accountIndex - Account index override (uses context if not set)
+ */
+function logFailure(step, url, error, options = {}) {
+  const accountIndex = options.accountIndex !== undefined 
+    ? options.accountIndex 
+    : _runContext.accountIndex;
+  
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  const accountPart = accountIndex >= 0 ? `[Account ${accountIndex + 1}]` : '[NoAccount]';
+  
+  log('ERROR', `${accountPart} Step: ${step} | URL: ${url} | Error: ${errorMsg}`);
+
+  // Write structured failure to run folder
+  if (_runContext.runDir) {
+    const failureEntry = {
+      timestamp: new Date().toISOString(),
+      accountIndex,
+      step,
+      url,
+      error: errorMsg
+    };
+    const failuresFile = path.join(_runContext.runDir, 'failures.jsonl');
+    fs.appendFileSync(failuresFile, JSON.stringify(failureEntry) + '\n');
+  }
 }
 
 /**
@@ -97,23 +190,77 @@ function randomDelay() {
 }
 
 /**
- * Capture screenshot with timestamp
+ * Capture screenshot with timestamp, account index, and step name
+ * Filename format: TIMESTAMP_accN_STEP.png (or TIMESTAMP_STEP.png if no account)
+ * Screenshots are saved to:
+ *   - SS_DIR (screens/) for backward compatibility
+ *   - Run folder if run context is initialized
+ * 
  * @param {import('playwright').Page} page
- * @param {string} name - Screenshot name
- * @param {boolean} fullPage - Capture full page
+ * @param {string} name - Screenshot name (step name)
+ * @param {boolean|Object} fullPageOrOptions - fullPage boolean or options object
+ * @param {boolean} fullPageOrOptions.fullPage - Capture full page
+ * @param {number} fullPageOrOptions.accountIndex - Account index override
  */
-async function captureScreenshot(page, name, fullPage = true) {
+async function captureScreenshot(page, name, fullPageOrOptions = true) {
   try {
+    const options = typeof fullPageOrOptions === 'object' 
+      ? fullPageOrOptions 
+      : { fullPage: fullPageOrOptions };
+    
+    const fullPage = options.fullPage !== false;
+    const accountIndex = options.accountIndex !== undefined 
+      ? options.accountIndex 
+      : _runContext.accountIndex;
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `${timestamp}_${sanitizeFilename(name)}.png`;
+    const accountPart = accountIndex >= 0 ? `acc${accountIndex + 1}` : '';
+    const sanitizedName = sanitizeFilename(name);
+    
+    // Build filename: TIMESTAMP_accN_STEP.png
+    const filenameParts = [timestamp];
+    if (accountPart) filenameParts.push(accountPart);
+    filenameParts.push(sanitizedName);
+    const filename = filenameParts.join('_') + '.png';
+    
+    // Save to screens/ directory
     const filepath = path.join(SS_DIR, filename);
     await page.screenshot({ path: filepath, fullPage });
     log('INFO', `Screenshot saved: ${filename}`);
+
+    // Also save to run folder if context exists
+    if (_runContext.runDir) {
+      const runFilepath = path.join(_runContext.runDir, filename);
+      await page.screenshot({ path: runFilepath, fullPage });
+    }
+
     return filepath;
   } catch (err) {
     log('WARN', `Failed to capture screenshot: ${err.message}`);
     return null;
   }
+}
+
+/**
+ * Capture failure screenshot with unified naming and logging
+ * Combines logFailure + captureScreenshot for convenience
+ * @param {import('playwright').Page} page
+ * @param {string} step - Current step name
+ * @param {Error|string} error - Error object or message
+ * @param {Object} options - Additional options
+ * @param {number} options.accountIndex - Account index override
+ */
+async function captureFailure(page, step, error, options = {}) {
+  const url = page ? await page.url().catch(() => 'unknown') : 'no-page';
+  logFailure(step, url, error, options);
+  
+  if (page) {
+    return await captureScreenshot(page, `fail-${step}`, {
+      fullPage: true,
+      accountIndex: options.accountIndex
+    });
+  }
+  return null;
 }
 
 /**
@@ -291,6 +438,7 @@ function maskSensitive(value, visibleChars = 4) {
 
 /**
  * Save account results to JSON file
+ * Saves to both LOG_DIR and run folder (if initialized)
  * @param {Array} results - Array of account results
  */
 function saveAccountResults(results) {
@@ -299,10 +447,10 @@ function saveAccountResults(results) {
   try {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `account-results-${timestamp}.json`;
-    const filepath = path.join(LOG_DIR, filename);
 
     const summary = {
       timestamp: new Date().toISOString(),
+      runId: _runContext.runId,
       totalAccounts: results.length,
       successful: results.filter(r => r.status === 'success').length,
       failed: results.filter(r => r.status === 'error').length,
@@ -311,8 +459,17 @@ function saveAccountResults(results) {
       results: results
     };
 
+    // Save to main logs folder
+    const filepath = path.join(LOG_DIR, filename);
     fs.writeFileSync(filepath, JSON.stringify(summary, null, 2));
     log('INFO', `Account results saved to: ${filename}`);
+
+    // Also save to run folder if initialized
+    if (_runContext.runDir) {
+      const runFilepath = path.join(_runContext.runDir, 'account-results.json');
+      fs.writeFileSync(runFilepath, JSON.stringify(summary, null, 2));
+    }
+
     return filepath;
   } catch (err) {
     log('WARN', `Failed to save account results: ${err.message}`);
@@ -350,11 +507,13 @@ function formatAccountError(step, accountIndex, error) {
 
 module.exports = {
   log,
+  logFailure,
   withRetry,
   sleep,
   humanDelay,
   randomDelay,
   captureScreenshot,
+  captureFailure,
   sanitizeFilename,
   fuzzyMatch,
   normalizeText,
@@ -365,6 +524,10 @@ module.exports = {
   saveAccountResults,
   createErrorContext,
   formatAccountError,
+  initRunContext,
+  getRunContext,
+  setAccountContext,
+  getAccountContext,
   SS_DIR,
   LOG_DIR
 };

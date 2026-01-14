@@ -1,7 +1,7 @@
 /**
  * Navigation Manager - Handles page navigation and search
  */
-const { log, withRetry, captureScreenshot, sleep } = require('../util.js');
+const { log, withRetry, captureScreenshot, captureFailure, sleep } = require('../util.js');
 
 class NavigationManager {
   /**

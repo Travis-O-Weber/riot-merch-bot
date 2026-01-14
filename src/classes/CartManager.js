@@ -1,7 +1,7 @@
 /**
  * Cart Manager - Handles cart operations
  */
-const { log, withRetry, captureScreenshot, sleep, clickWithFallback } = require('../util.js');
+const { log, withRetry, captureScreenshot, captureFailure, sleep, clickWithFallback } = require('../util.js');
 
 /**
  * Accept cookie consent to enable checkout functionality

@@ -1,7 +1,7 @@
 /**
  * Product Handler - Discovers products and adds to cart
  */
-const { log, withRetry, captureScreenshot, sleep, fuzzyMatch, clickWithFallback, normalizeText } = require('../util.js');
+const { log, withRetry, captureScreenshot, captureFailure, sleep, fuzzyMatch, clickWithFallback, normalizeText } = require('../util.js');
 const stringSimilarity = require('string-similarity');
 
 class ProductHandler {
@@ -62,14 +62,13 @@ class ProductHandler {
           log('WARN', `Out of stock: "${product.names[0]}"`);
         }
       } catch (err) {
-        log('ERROR', `Failed to add "${product.names[0]}": ${err.message}`);
         results.push({
           product: product.names[0],
           quantity: product.quantity,
           status: 'error',
           message: err.message
         });
-        await captureScreenshot(this.page, `error-product-${product.names[0].substring(0, 20)}`);
+        await captureFailure(this.page, `add-product-${product.names[0].substring(0, 20)}`, err);
       }
 
       // Close cart if open before processing next product
