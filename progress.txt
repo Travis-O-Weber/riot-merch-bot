@@ -5,6 +5,7 @@
 - Utility functions (log, sleep, captureScreenshot) are in `src/util.js`
 - Configuration values are in `src/config.js`, env parsing in `src/env.js`
 - Cookie consent handling is in NavigationManager.handleCookieConsent() - idempotent (tracks `_cookieConsentHandled`)
+- Sign-in detection uses AccountManager.isSignedInDetailed() with 5 strategies; verifySignedInOrFail() for safe error handling
 
 ---
 
@@ -58,4 +59,21 @@ Thread: https://ampcode.com/threads/T-019bbad9-fe78-75ac-ab5a-0df5bf7c3610
   - Use named selectors (object with `selector` and `name`) for better logging
   - Track state with instance flags like `_cookieConsentHandled` for idempotency
   - Return structured results to allow callers to inspect what happened
+---
+
+## 2026-01-14T05:00:00Z - S4
+Thread: https://ampcode.com/threads/T-019bbadc-e1ec-757f-b086-50b4d059683c
+- Implemented signed-in state detection in CONNECT_EXISTING mode
+- Added `isSignedInDetailed()` with 5 detection strategies and structured results
+- Added `verifySignedInOrFail()` for safe error handling with screenshots
+- Removed `_waitForManualSignIn()` - bot never requests manual input
+- Bot stops safely with clear error message if not signed in
+- Files changed:
+  - src/classes/AccountManager.js (isSignedInDetailed, verifySignedInOrFail)
+  - src/classes/RiotMerchBot.js (removed _waitForManualSignIn, uses verifySignedInOrFail)
+- **Learnings for future iterations:**
+  - Return detailed/structured results from detection functions for better debugging
+  - CONNECT_EXISTING mode should never wait for manual input - stop safely instead
+  - Provide actionable instructions in error messages (e.g., step-by-step how to sign in)
+  - Multiple detection strategies needed: URL check, sign-in button, sign-out button, account links
 ---

@@ -90,7 +90,7 @@
       "id": "S4",
       "priority": 4,
       "title": "Signed-in state detection in CONNECT_EXISTING mode",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Bot detects signed-in state via account UI vs 'Sign In'.",
         "If not signed in, bot stops safely with clear error and screenshot.",
