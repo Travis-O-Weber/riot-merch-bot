@@ -119,3 +119,21 @@ Thread: https://ampcode.com/threads/T-019bbae4-d348-71d0-b997-b2423e6469eb
   - Regex patterns for limit detection: /limit(ed)?\s*(to|of|reached|per)/i, etc.
   - Preorder buttons common for upcoming releases - must be in fallback chain
 ---
+
+## 2026-01-14T05:13:00Z - S7
+Thread: https://ampcode.com/threads/T-019bbaea-19e5-73e6-99e0-f1f677784dae
+- Verified checkout flow respects DISCOUNT_CODE and safe-stop rules
+- All acceptance criteria already implemented by existing code:
+  - Blank DISCOUNT_CODE handling in FormFiller.applyDiscountCode() (lines 191-194)
+  - Blank env fields skip filling AND don't overwrite existing values via _fillField() (lines 261-264, 273-277)
+  - FULL_SEND=0 safe stop with screenshot in _reviewAndPlaceOrder()
+- Updated safe-stop log message to include "SAFE_STOP_BEFORE_PURCHASE" per acceptance criteria
+- Changed screenshot name from 'final-review-stopped' to 'safe-stop-final-review'
+- Files changed:
+  - src/classes/CheckoutManager.js (updated log messages for SAFE_STOP_BEFORE_PURCHASE)
+- **Learnings for future iterations:**
+  - FormFiller._fillField() already checks for existing values before filling - safe by default
+  - FormFiller._fillSelect() also skips when value is blank
+  - When reviewing acceptance criteria, check if existing code already satisfies requirements before implementing
+  - Use explicit constant names like SAFE_STOP_BEFORE_PURCHASE in logs for easy grep-ability
+---
