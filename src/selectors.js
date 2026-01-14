@@ -101,6 +101,12 @@ function getSelectors(page) {
     buyNow: () => page.getByRole('button', { name: /buy now|buy it now/i }),
     buyNowFallback: () => page.locator('.buy-now, .buy-it-now, button:has-text("Buy Now")'),
 
+    // Preorder button
+    preorder: () => page.getByRole('button', { name: /pre-order|preorder/i }),
+    preorderFallback1: () => page.locator('button:has-text("Pre-Order"), button:has-text("Preorder")'),
+    preorderFallback2: () => page.locator('.preorder, .pre-order, [class*="preorder"], [class*="pre-order"]'),
+    preorderFallback3: () => page.locator('[data-testid*="preorder"], [data-action*="preorder"]'),
+
     // Sold out indicator
     soldOut: () => page.locator('.sold-out, .out-of-stock, [class*="sold-out"], button:has-text("Sold Out")'),
     soldOutFallback: () => page.locator('button[disabled]:has-text("Out of Stock"), .unavailable'),
@@ -362,6 +368,18 @@ function getSelectors(page) {
     purchaseLimitMessage: () => page.locator(':text("limit"), :text("maximum")'),
     purchaseLimitFallback1: () => page.locator(':text("already purchased"), :text("one per")'),
     purchaseLimitFallback2: () => page.locator('.limit-error, .purchase-limit, [class*="limit"]'),
+    purchaseLimitFallback3: () => page.locator(':text("limited to"), :text("limit reached")'),
+    purchaseLimitFallback4: () => page.locator(':text("cannot add more"), :text("max quantity")'),
+
+    // Quantity limit / max quantity indicators
+    quantityLimitMessage: () => page.locator('[class*="error"]:has-text("limit"), [class*="error"]:has-text("maximum")'),
+    quantityLimitFallback1: () => page.locator('[role="alert"]:has-text("limit"), [role="alert"]:has-text("quantity")'),
+    quantityLimitFallback2: () => page.locator(':text("per customer"), :text("per order")'),
+
+    // Add to cart success indicators
+    addedToCartConfirmation: () => page.locator(':text("added to cart"), :text("added to bag")'),
+    addedToCartFallback1: () => page.locator('.cart-notification, .add-to-cart-success, [class*="cart-success"]'),
+    addedToCartFallback2: () => page.locator('[role="alert"]:has-text("added"), [class*="notification"]:has-text("cart")'),
   };
 }
 

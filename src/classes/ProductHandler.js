@@ -22,34 +22,53 @@ class ProductHandler {
 
   /**
    * Find and add all configured products
-   * @returns {Promise<number>} - Number of products successfully added
+   * @returns {Promise<{totalAdded: number, results: Array<{product: string, status: string, message: string}>}>}
    */
   async processAllProducts() {
     let totalAdded = 0;
+    const results = [];
 
     for (const product of this.config.PRODUCTS) {
       log('INFO', `Processing product: ${product.names[0]}`);
 
       try {
-        const success = await withRetry(
+        const result = await withRetry(
           async () => {
-            const found = await this.findAndAddProduct(product.names, product.quantity);
-            if (!found) {
-              throw new Error('Product not found');
+            const addResult = await this.findAndAddProduct(product.names, product.quantity);
+            // Only retry on 'error' or 'not_found' status, not on limit_reached or out_of_stock
+            if (!addResult.success && (addResult.status === 'error' || addResult.status === 'not_found')) {
+              throw new Error(addResult.message);
             }
-            return found;
+            return addResult;
           },
           this.config.MAX_RETRIES,
           `Adding "${product.names[0]}"`,
           { page: this.page }
         );
 
-        if (success) {
+        results.push({
+          product: product.names[0],
+          quantity: product.quantity,
+          status: result.status,
+          message: result.message
+        });
+
+        if (result.success) {
           totalAdded++;
           log('OK', `Successfully added: ${product.names[0]} x${product.quantity}`);
+        } else if (result.status === 'limit_reached') {
+          log('WARN', `Limit reached for "${product.names[0]}": ${result.message}`);
+        } else if (result.status === 'out_of_stock') {
+          log('WARN', `Out of stock: "${product.names[0]}"`);
         }
       } catch (err) {
         log('ERROR', `Failed to add "${product.names[0]}": ${err.message}`);
+        results.push({
+          product: product.names[0],
+          quantity: product.quantity,
+          status: 'error',
+          message: err.message
+        });
         await captureScreenshot(this.page, `error-product-${product.names[0].substring(0, 20)}`);
       }
 
@@ -57,14 +76,14 @@ class ProductHandler {
       await this.cart.closeIfOpen();
     }
 
-    return totalAdded;
+    return { totalAdded, results };
   }
 
   /**
    * Find and add a single product
    * @param {string[]} productNames - Product names/synonyms
    * @param {number} quantity - Quantity to add
-   * @returns {Promise<boolean>}
+   * @returns {Promise<{success: boolean, status: 'success'|'limit_reached'|'out_of_stock'|'not_found'|'error', message: string}>}
    */
   async findAndAddProduct(productNames, quantity) {
     // Strategy 1: Navigate by game category (Homepage → Category → Game)
@@ -111,7 +130,7 @@ class ProductHandler {
     }
 
     log('ERROR', 'Product not found with any strategy');
-    return false;
+    return { success: false, status: 'not_found', message: 'Product not found with any discovery strategy' };
   }
 
   /**
@@ -445,7 +464,7 @@ class ProductHandler {
    * Add product to cart
    * @param {import('playwright').Locator} productCard
    * @param {number} quantity
-   * @returns {Promise<boolean>}
+   * @returns {Promise<{success: boolean, status: 'success'|'limit_reached'|'out_of_stock'|'error', message: string}>}
    */
   async _addProductToCart(productCard, quantity) {
     // First, click on the product to go to product page
@@ -482,21 +501,22 @@ class ProductHandler {
       await this.navigation._waitForPageLoad();
     } catch (err) {
       log('ERROR', `Failed to click product: ${err.message}`);
-      return false;
+      return { success: false, status: 'error', message: `Failed to click product: ${err.message}` };
     }
 
     // Check if sold out
     if (await this._isSoldOut()) {
       log('WARN', 'Product is sold out');
-      return false;
+      await captureScreenshot(this.page, 'product-sold-out');
+      return { success: false, status: 'out_of_stock', message: 'Product is sold out' };
     }
 
-    // Set quantity
+    // Set quantity (enforces QTY1 configuration)
     if (quantity > 1) {
       await this._setQuantity(quantity);
     }
 
-    // Click Add to Cart
+    // Click Add to Cart and return structured result
     return await this._clickAddToCart();
   }
 
@@ -597,13 +617,15 @@ class ProductHandler {
   }
 
   /**
-   * Click Add to Cart button
-   * @returns {Promise<boolean>}
+   * Click Add to Cart button with multiple fallback strategies
+   * Supports: Add to Cart, Buy Now, Preorder buttons
+   * @returns {Promise<{success: boolean, status: 'success'|'limit_reached'|'out_of_stock'|'error', message: string}>}
    */
   async _clickAddToCart() {
-    log('INFO', 'Clicking Add to Cart');
+    log('INFO', 'Clicking Add to Cart / Buy / Preorder');
 
     const strategies = [
+      // Primary: Add to Cart buttons
       () => this.SEL.addToCart(),
       () => this.SEL.addToCartFallback1(),
       () => this.SEL.addToCartFallback2(),
@@ -612,22 +634,160 @@ class ProductHandler {
       () => this.SEL.addToCartFallback5(),
       () => this.SEL.addToCartFallback6(),
       () => this.SEL.addToCartFallback7(),
+      // Secondary: Buy Now buttons
       () => this.SEL.buyNow(),
       () => this.SEL.buyNowFallback(),
+      // Tertiary: Preorder buttons
+      () => this.SEL.preorder(),
+      () => this.SEL.preorderFallback1(),
+      () => this.SEL.preorderFallback2(),
+      () => this.SEL.preorderFallback3(),
     ];
 
     try {
       await clickWithFallback(this.page, strategies, 'Add to Cart', this.config.ACTION_TIMEOUT_MS);
-      await sleep(1000);
+      await sleep(1500);
 
-      // Verify item was added (cart drawer opens or count increases)
-      log('OK', 'Add to Cart clicked');
-      return true;
+      // Check for limit/error messages after clicking
+      const limitCheck = await this._checkForPurchaseLimit();
+      if (limitCheck.limitReached) {
+        log('WARN', `Purchase limit detected: ${limitCheck.message}`);
+        await captureScreenshot(this.page, 'limit-reached');
+        return { success: false, status: 'limit_reached', message: limitCheck.message };
+      }
+
+      // Verify item was added (check for confirmation or cart drawer)
+      const addedSuccessfully = await this._verifyItemAdded();
+      if (addedSuccessfully) {
+        log('OK', 'Item successfully added to cart');
+        return { success: true, status: 'success', message: 'Item added to cart' };
+      }
+
+      // Item may have been added even without confirmation popup
+      log('INFO', 'Add to Cart clicked (confirmation not detected, proceeding)');
+      return { success: true, status: 'success', message: 'Add to Cart clicked' };
+
     } catch (err) {
       log('ERROR', `Failed to click Add to Cart: ${err.message}`);
       await captureScreenshot(this.page, 'error-add-to-cart');
-      return false;
+      return { success: false, status: 'error', message: err.message };
     }
+  }
+
+  /**
+   * Check for purchase limit messages after adding to cart
+   * @returns {Promise<{limitReached: boolean, message: string}>}
+   */
+  async _checkForPurchaseLimit() {
+    const limitPatterns = [
+      /limit(ed)?\s*(to|of|reached|per)/i,
+      /maximum\s*(quantity|purchase|allowed)/i,
+      /already\s*(purchased|in\s*cart)/i,
+      /one\s*per\s*(customer|order|account)/i,
+      /cannot\s*add\s*more/i,
+      /max\s*quantity/i,
+      /per\s*customer/i,
+      /per\s*order/i,
+    ];
+
+    // Check using selectors
+    const limitStrategies = [
+      () => this.SEL.purchaseLimitMessage(),
+      () => this.SEL.purchaseLimitFallback1(),
+      () => this.SEL.purchaseLimitFallback2(),
+      () => this.SEL.purchaseLimitFallback3(),
+      () => this.SEL.purchaseLimitFallback4(),
+      () => this.SEL.quantityLimitMessage(),
+      () => this.SEL.quantityLimitFallback1(),
+      () => this.SEL.quantityLimitFallback2(),
+    ];
+
+    for (const strategy of limitStrategies) {
+      try {
+        const locator = strategy();
+        const count = await locator.count();
+        if (count > 0) {
+          const element = locator.first();
+          if (await element.isVisible()) {
+            const text = await element.textContent();
+            // Verify it's actually a limit message, not just random text with "limit"
+            for (const pattern of limitPatterns) {
+              if (pattern.test(text)) {
+                return { limitReached: true, message: text.trim().substring(0, 100) };
+              }
+            }
+          }
+        }
+      } catch {
+        // Continue checking
+      }
+    }
+
+    // Check for error messages with limit text
+    try {
+      const errorMessages = this.page.locator('[class*="error"], [role="alert"], .notification');
+      const count = await errorMessages.count();
+      for (let i = 0; i < count; i++) {
+        const msg = errorMessages.nth(i);
+        if (await msg.isVisible()) {
+          const text = await msg.textContent();
+          for (const pattern of limitPatterns) {
+            if (pattern.test(text)) {
+              return { limitReached: true, message: text.trim().substring(0, 100) };
+            }
+          }
+        }
+      }
+    } catch {
+      // Continue
+    }
+
+    return { limitReached: false, message: '' };
+  }
+
+  /**
+   * Verify that item was added to cart (check for confirmation)
+   * @returns {Promise<boolean>}
+   */
+  async _verifyItemAdded() {
+    // Check for cart drawer opening
+    const drawerStrategies = [
+      () => this.SEL.cartDrawer(),
+      () => this.SEL.cartDrawerFallback(),
+    ];
+
+    for (const strategy of drawerStrategies) {
+      try {
+        const drawer = strategy();
+        if (await drawer.count() > 0 && await drawer.first().isVisible()) {
+          log('DEBUG', 'Cart drawer opened - item added');
+          return true;
+        }
+      } catch {
+        // Continue
+      }
+    }
+
+    // Check for confirmation message
+    const confirmStrategies = [
+      () => this.SEL.addedToCartConfirmation(),
+      () => this.SEL.addedToCartFallback1(),
+      () => this.SEL.addedToCartFallback2(),
+    ];
+
+    for (const strategy of confirmStrategies) {
+      try {
+        const confirm = strategy();
+        if (await confirm.count() > 0 && await confirm.first().isVisible()) {
+          log('DEBUG', 'Add to cart confirmation detected');
+          return true;
+        }
+      } catch {
+        // Continue
+      }
+    }
+
+    return false;
   }
 
   /**

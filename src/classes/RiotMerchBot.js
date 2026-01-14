@@ -132,15 +132,33 @@ class RiotMerchBot {
 
       // Step 2: Process products (find and add to cart)
       log('INFO', '=== FINDING AND ADDING PRODUCTS ===');
-      const totalAdded = await this.product.processAllProducts();
-      log('INFO', `Total products added to cart: ${totalAdded}`);
+      const productResult = await this.product.processAllProducts();
+      log('INFO', `Total products added to cart: ${productResult.totalAdded}`);
 
-      if (totalAdded === 0) {
+      // Log individual product results
+      for (const r of productResult.results) {
+        if (r.status === 'limit_reached') {
+          log('INFO', `  [LIMIT] ${r.product}: ${r.message}`);
+        } else if (r.status === 'out_of_stock') {
+          log('INFO', `  [OUT OF STOCK] ${r.product}`);
+        } else if (r.status === 'error' || r.status === 'not_found') {
+          log('INFO', `  [FAILED] ${r.product}: ${r.message}`);
+        }
+      }
+
+      if (productResult.totalAdded === 0) {
         log('WARN', 'No products were added to cart');
+        // Check if it's due to limits or stock issues (move to next account scenario)
+        const hasLimitOrStock = productResult.results.some(r => 
+          r.status === 'limit_reached' || r.status === 'out_of_stock'
+        );
+        if (hasLimitOrStock) {
+          log('INFO', 'Products unavailable due to limits or stock - would move to next account in multi-account mode');
+        }
         await captureScreenshot(this.page, 'no-products-added');
       } else {
         // Step 3: Handle checkout
-        await this._handleCheckout(totalAdded);
+        await this._handleCheckout(productResult.totalAdded);
         success = true;
       }
 
