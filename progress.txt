@@ -6,6 +6,7 @@
 - Configuration values are in `src/config.js`, env parsing in `src/env.js`
 - Cookie consent handling is in NavigationManager.handleCookieConsent() - idempotent (tracks `_cookieConsentHandled`)
 - Sign-in detection uses AccountManager.isSignedInDetailed() with 5 strategies; verifySignedInOrFail() for safe error handling
+- Product discovery uses fuzzyMatch() from util.js; on failure, _logTopCandidates() logs top 5 matches with scores
 
 ---
 
@@ -76,4 +77,20 @@ Thread: https://ampcode.com/threads/T-019bbadc-e1ec-757f-b086-50b4d059683c
   - CONNECT_EXISTING mode should never wait for manual input - stop safely instead
   - Provide actionable instructions in error messages (e.g., step-by-step how to sign in)
   - Multiple detection strategies needed: URL check, sign-in button, sign-out button, account links
+---
+
+## 2026-01-14T05:05:00Z - S5
+Thread: https://ampcode.com/threads/T-019bbae0-ebb9-7756-b41e-410f63d67675
+- Implemented product discovery with top 5 candidate logging on failure
+- Added `_calculateBestMatchScore()` to compute similarity scores for all products
+- Added `_logTopCandidates()` to log top 5 matches with scores and take screenshot
+- Modified `_findProductInListing()` to collect candidates and call logging on failure
+- Added screenshot capture for all failure scenarios (no cards, no titles, failed search)
+- Files changed:
+  - src/classes/ProductHandler.js (added scoring and logging functions)
+- **Learnings for future iterations:**
+  - Existing fuzzyMatch() and _loadAllProducts() already satisfied most S5 acceptance criteria
+  - Key gap was logging candidates on failure - always log what was found vs. what was searched
+  - Use stringSimilarity.compareTwoStrings() directly when calculating numeric scores
+  - Screenshots on failure are essential for debugging product discovery issues
 ---

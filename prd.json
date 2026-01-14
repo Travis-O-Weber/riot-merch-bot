@@ -101,7 +101,7 @@
       "id": "S5",
       "priority": 5,
       "title": "Product discovery without URLs using fuzzy title matching",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Bot finds PRODUCT1 via visible titles (case-insensitive + fuzzy).",
         "Supports scrolling and pagination.",
