@@ -12,6 +12,8 @@
 - Purchase limit detection via _checkForPurchaseLimit() with regex patterns for various limit messages
 - Multi-account flow in RiotMerchBot._runMultiAccountFlow() - iterates RIOT_ACCOUNTS, tracks results via AccountManager.recordAccountResult()
 - Browser health check via isBrowserAlive() from brave.js; reinitialize via closeBrowser() + initialize() if unhealthy
+- **Unified failure artifacts**: Use initRunContext() at startup, setAccountContext(i) per account, captureFailure() for errors
+- **Run folders**: Each run creates `logs/run_YYYY-MM-DDTHH-MM-SS/` with run.log, failures.jsonl, account-results.json, and screenshots
 
 ---
 

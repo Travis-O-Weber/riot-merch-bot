@@ -146,7 +146,7 @@
       "id": "S9",
       "priority": 9,
       "title": "Unified failure artifacts: screenshots and logs",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Every failure logs account index, step name, URL, and error.",
         "Screenshot filenames include timestamp, account index, and step.",
