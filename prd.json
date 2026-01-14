@@ -135,7 +135,7 @@
       "id": "S8",
       "priority": 8,
       "title": "Multi-account rotation in a single execution",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Iterates RIOT_USER_1..N skipping blanks.",
         "For each account: verify signed-in → attempt flow → sign out → continue.",

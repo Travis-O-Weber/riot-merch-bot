@@ -10,6 +10,8 @@
 - Add-to-cart uses structured results: `{success, status: 'success'|'limit_reached'|'out_of_stock'|'error', message}`
 - Preorder buttons supported via selectors: preorder(), preorderFallback1-3()
 - Purchase limit detection via _checkForPurchaseLimit() with regex patterns for various limit messages
+- Multi-account flow in RiotMerchBot._runMultiAccountFlow() - iterates RIOT_ACCOUNTS, tracks results via AccountManager.recordAccountResult()
+- Browser health check via isBrowserAlive() from brave.js; reinitialize via closeBrowser() + initialize() if unhealthy
 
 ---
 
@@ -136,4 +138,24 @@ Thread: https://ampcode.com/threads/T-019bbaea-19e5-73e6-99e0-f1f677784dae
   - FormFiller._fillSelect() also skips when value is blank
   - When reviewing acceptance criteria, check if existing code already satisfies requirements before implementing
   - Use explicit constant names like SAFE_STOP_BEFORE_PURCHASE in logs for easy grep-ability
+---
+
+## 2026-01-14T05:16:00Z - S8
+Thread: https://ampcode.com/threads/T-019bbaec-df4e-7113-a186-a024bd466d04
+- Implemented multi-account rotation in a single execution
+- Added `_runMultiAccountFlow()` to iterate through all configured accounts
+- Added `_runSingleAccountFlow()` to preserve original single-session behavior
+- Added `_handleAccountSignIn()` for per-account sign-in handling
+- Added `_ensureBrowserHealthy()` to reinitialize browser if unhealthy
+- For each account: verify signed-in → attempt flow → sign out → continue
+- Logs multi-account summary with success/fail counts at end
+- Uses AccountManager.recordAccountResult() to track per-account results
+- First account in CONNECT_EXISTING mode uses existing session; subsequent accounts attempt programmatic sign-in
+- Files changed:
+  - src/classes/RiotMerchBot.js (_runMultiAccountFlow, _runSingleAccountFlow, _handleAccountSignIn, _ensureBrowserHealthy)
+- **Learnings for future iterations:**
+  - AccountManager already had getAccountCount(), getAccount(), setCurrentAccountIndex(), recordAccountResult() methods
+  - isBrowserAlive() and closeBrowser() available from brave.js for health checks
+  - In CONNECT_EXISTING mode, first account should use existing session (user signs in manually)
+  - Programmatic sign-in likely blocked by bot detection - flow continues to next account gracefully
 ---
