@@ -13,6 +13,7 @@ class NavigationManager {
     this.page = page;
     this.SEL = SEL;
     this.config = config;
+    this._cookieConsentHandled = false;
   }
 
   /**
@@ -33,56 +34,78 @@ class NavigationManager {
   }
 
   /**
-   * Handle cookie consent popups
+   * Handle cookie consent popups - idempotent (safe to call multiple times)
+   * @param {Object} options
+   * @param {boolean} options.force - Force check even if already handled
+   * @returns {Promise<{handled: boolean, method: string|null, selectorsAttempted: string[]}>}
    */
-  async _handleCookieConsent() {
+  async handleCookieConsent(options = {}) {
+    const { force = false } = options;
+    const selectorsAttempted = [];
+    const result = { handled: false, method: null, selectorsAttempted };
+
+    if (this._cookieConsentHandled && !force) {
+      log('DEBUG', 'Cookie consent already handled, skipping');
+      return result;
+    }
+
     log('DEBUG', 'Checking for cookie consent popup');
 
     const acceptSelectors = [
-      // Common accept button patterns
-      'button:has-text("Accept")',
-      'button:has-text("Accept All")',
-      'button:has-text("Accept Cookies")',
-      'button:has-text("Allow")',
-      'button:has-text("Allow All")',
-      'button:has-text("I Accept")',
-      'button:has-text("Got it")',
-      'button:has-text("OK")',
-      'button:has-text("Agree")',
-      // ID/class patterns
-      '#accept-cookies',
-      '#cookie-accept',
-      '.accept-cookies',
-      '.cookie-accept',
-      '[data-testid*="accept"]',
-      '[data-testid*="cookie"]',
-      // Aria patterns
-      '[aria-label*="accept" i][aria-label*="cookie" i]',
-      '[aria-label*="accept" i]',
-      // OneTrust (common cookie consent provider)
-      '#onetrust-accept-btn-handler',
-      '.onetrust-accept-btn',
-      // CookieBot
-      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
-      // Generic consent
-      '[class*="cookie"][class*="accept"]',
-      '[class*="consent"][class*="accept"]',
-      '[class*="cookie"] button:has-text("Accept")',
-      '[class*="consent"] button:has-text("Accept")',
-      '[role="dialog"] button:has-text("Accept")',
-      '[role="alertdialog"] button:has-text("Accept")',
+      { selector: '#onetrust-accept-btn-handler', name: 'OneTrust Accept' },
+      { selector: '.onetrust-accept-btn-handler', name: 'OneTrust Class' },
+      { selector: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll', name: 'CookieBot Accept All' },
+      { selector: '#CybotCookiebotDialogBodyButtonAccept', name: 'CookieBot Accept' },
+      { selector: 'button:has-text("Accept All Cookies")', name: 'Accept All Cookies button' },
+      { selector: 'button:has-text("Accept All")', name: 'Accept All button' },
+      { selector: 'button:has-text("Accept Cookies")', name: 'Accept Cookies button' },
+      { selector: 'button:has-text("Accept")', name: 'Accept button' },
+      { selector: 'button:has-text("Allow All")', name: 'Allow All button' },
+      { selector: 'button:has-text("Allow Cookies")', name: 'Allow Cookies button' },
+      { selector: 'button:has-text("Allow")', name: 'Allow button' },
+      { selector: 'button:has-text("I Accept")', name: 'I Accept button' },
+      { selector: 'button:has-text("I Agree")', name: 'I Agree button' },
+      { selector: 'button:has-text("Agree")', name: 'Agree button' },
+      { selector: 'button:has-text("Got it")', name: 'Got it button' },
+      { selector: 'button:has-text("OK")', name: 'OK button' },
+      { selector: 'button:has-text("Continue")', name: 'Continue button (cookie context)' },
+      { selector: '#accept-cookies', name: '#accept-cookies ID' },
+      { selector: '#cookie-accept', name: '#cookie-accept ID' },
+      { selector: '.accept-cookies', name: '.accept-cookies class' },
+      { selector: '.cookie-accept', name: '.cookie-accept class' },
+      { selector: '[data-testid="cookie-accept"]', name: 'testid cookie-accept' },
+      { selector: '[data-testid*="accept"][data-testid*="cookie"]', name: 'testid accept+cookie' },
+      { selector: '[aria-label*="accept" i][aria-label*="cookie" i]', name: 'aria-label accept+cookie' },
+      { selector: '[aria-label*="Accept cookies" i]', name: 'aria-label Accept cookies' },
+      { selector: '[class*="cookie"][class*="accept"]', name: 'class cookie+accept' },
+      { selector: '[class*="consent"][class*="accept"]', name: 'class consent+accept' },
+      { selector: '[class*="cookie-banner"] button:has-text("Accept")', name: 'cookie-banner Accept' },
+      { selector: '[class*="cookie-consent"] button:has-text("Accept")', name: 'cookie-consent Accept' },
+      { selector: '[class*="gdpr"] button:has-text("Accept")', name: 'gdpr Accept' },
+      { selector: '[role="dialog"] button:has-text("Accept")', name: 'dialog Accept' },
+      { selector: '[role="alertdialog"] button:has-text("Accept")', name: 'alertdialog Accept' },
+      { selector: '[class*="privacy"] button:has-text("Accept")', name: 'privacy Accept' },
+      { selector: '.cc-accept', name: '.cc-accept (Cookie Consent lib)' },
+      { selector: '.cc-allow', name: '.cc-allow (Cookie Consent lib)' },
+      { selector: '#ccAccept', name: '#ccAccept ID' },
     ];
 
-    for (const selector of acceptSelectors) {
+    for (const { selector, name } of acceptSelectors) {
+      selectorsAttempted.push(name);
       try {
         const btn = this.page.locator(selector);
-        if (await btn.count() > 0) {
+        const count = await btn.count();
+        if (count > 0) {
           const element = btn.first();
-          if (await element.isVisible()) {
+          const isVisible = await element.isVisible().catch(() => false);
+          if (isVisible) {
             await element.click();
-            log('OK', `Cookie consent accepted via: ${selector.substring(0, 40)}`);
+            log('OK', `Cookie consent accepted via: ${name}`);
+            this._cookieConsentHandled = true;
+            result.handled = true;
+            result.method = name;
             await sleep(1000);
-            return;
+            return result;
           }
         }
       } catch {
@@ -90,26 +113,34 @@ class NavigationManager {
       }
     }
 
-    // Also try decline/reject (in case user prefers that)
     const declineSelectors = [
-      'button:has-text("Decline")',
-      'button:has-text("Reject")',
-      'button:has-text("Reject All")',
-      'button:has-text("Only Essential")',
-      'button:has-text("Necessary Only")',
-      '#onetrust-reject-all-handler',
+      { selector: '#onetrust-reject-all-handler', name: 'OneTrust Reject' },
+      { selector: 'button:has-text("Decline All")', name: 'Decline All button' },
+      { selector: 'button:has-text("Decline")', name: 'Decline button' },
+      { selector: 'button:has-text("Reject All")', name: 'Reject All button' },
+      { selector: 'button:has-text("Reject")', name: 'Reject button' },
+      { selector: 'button:has-text("Only Essential")', name: 'Only Essential button' },
+      { selector: 'button:has-text("Necessary Only")', name: 'Necessary Only button' },
+      { selector: 'button:has-text("Essential Only")', name: 'Essential Only button' },
+      { selector: '.cc-deny', name: '.cc-deny (Cookie Consent lib)' },
     ];
 
-    for (const selector of declineSelectors) {
+    for (const { selector, name } of declineSelectors) {
+      selectorsAttempted.push(name);
       try {
         const btn = this.page.locator(selector);
-        if (await btn.count() > 0) {
+        const count = await btn.count();
+        if (count > 0) {
           const element = btn.first();
-          if (await element.isVisible()) {
+          const isVisible = await element.isVisible().catch(() => false);
+          if (isVisible) {
             await element.click();
-            log('OK', `Cookie consent declined via: ${selector.substring(0, 40)}`);
+            log('OK', `Cookie consent declined via: ${name}`);
+            this._cookieConsentHandled = true;
+            result.handled = true;
+            result.method = name;
             await sleep(1000);
-            return;
+            return result;
           }
         }
       } catch {
@@ -117,7 +148,57 @@ class NavigationManager {
       }
     }
 
-    log('DEBUG', 'No cookie consent popup found or already dismissed');
+    const bannerSelectors = [
+      '[class*="cookie-banner"]',
+      '[class*="cookie-consent"]',
+      '[class*="cookie-notice"]',
+      '[id*="cookie"]',
+      '#onetrust-consent-sdk',
+      '.CybotCookiebotDialog',
+      '[class*="gdpr"]',
+      '[role="dialog"][aria-label*="cookie" i]',
+    ];
+
+    let bannerVisible = false;
+    for (const selector of bannerSelectors) {
+      try {
+        const banner = this.page.locator(selector);
+        if (await banner.count() > 0 && await banner.first().isVisible()) {
+          bannerVisible = true;
+          log('WARN', `Cookie banner detected (${selector}) but no button found`);
+          break;
+        }
+      } catch {
+        // Continue
+      }
+    }
+
+    if (bannerVisible) {
+      log('WARN', `Cookie consent popup visible but no accept/decline button found`);
+      log('DEBUG', `Selectors attempted: ${selectorsAttempted.join(', ')}`);
+      await captureScreenshot(this.page, 'cookie-consent-no-button');
+      result.selectorsAttempted = selectorsAttempted;
+    } else {
+      log('DEBUG', 'No cookie consent popup found or already dismissed');
+      this._cookieConsentHandled = true;
+    }
+
+    return result;
+  }
+
+  /**
+   * Handle cookie consent popups - backward compatible alias
+   * @private
+   */
+  async _handleCookieConsent() {
+    return this.handleCookieConsent();
+  }
+
+  /**
+   * Reset cookie consent state (for page navigation)
+   */
+  resetCookieConsentState() {
+    this._cookieConsentHandled = false;
   }
 
   /**
