@@ -1,0 +1,42 @@
+## Codebase Patterns
+- CDP connection uses 127.0.0.1 instead of localhost to avoid IPv6 ::1 resolution
+- Browser functions are in `src/brave.js`, use `connectToExistingChrome()` for CDP mode
+- Retry logic uses exponential backoff with delays: [500, 1000, 2000, 4000, 8000]ms
+- Utility functions (log, sleep, captureScreenshot) are in `src/util.js`
+- Configuration values are in `src/config.js`, env parsing in `src/env.js`
+
+---
+
+## 2026-01-12T23:45:00Z - S1
+Thread: https://ampcode.com/threads/T-019bb497-cd88-76b7-bc07-91e56dbeee13
+- Implemented reliable CDP connect mode with IPv6 fix
+- Added verifyCdpEndpoint() to check /json/version before connecting
+- Added exponential backoff retry respecting MAX_RETRIES config
+- Added logChromeInstructions() with actionable steps for launching Chrome
+- Changed default CDP_ENDPOINT from localhost to 127.0.0.1
+- Files changed:
+  - src/brave.js (major refactor of connectToExistingChrome)
+  - src/config.js (default CDP_ENDPOINT updated)
+  - .env.example (added CONNECT_EXISTING and CDP_ENDPOINT docs)
+- **Learnings for future iterations:**
+  - Always use 127.0.0.1 instead of localhost to avoid IPv6 resolution
+  - The http module is already available in Node.js for simple HTTP checks
+  - Chrome requires --user-data-dir flag alongside --remote-debugging-port
+  - ESLint is not configured in this project (v9 requires eslint.config.js)
+---
+
+## 2026-01-14T04:52:00Z - S2
+Thread: https://ampcode.com/threads/T-019bbad6-6c5c-76b7-8b03-e9daa1e0f723
+- Added WebSocket debugger URL fallback for CDP connection
+- Modified verifyCdpEndpoint() to extract webSocketDebuggerUrl from /json/version response
+- Added tryConnectCDP() helper to try connection with a specific method (HTTP or WebSocket)
+- Refactored connectToExistingChrome() to try HTTP first, then fall back to WebSocket
+- Added clear logging indicating which CDP method (HTTP or WebSocket) was used
+- Added captureConnectionFailure() utility for failure screenshots with step context
+- Files changed:
+  - src/brave.js (added WebSocket fallback, tryConnectCDP, captureConnectionFailure)
+- **Learnings for future iterations:**
+  - Chrome's /json/version endpoint returns webSocketDebuggerUrl which can be used as fallback
+  - Playwright's connectOverCDP() works with both HTTP endpoints and WebSocket URLs
+  - Always include step name in failure logs and screenshots for debugging
+---

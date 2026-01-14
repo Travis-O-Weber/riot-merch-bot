@@ -56,7 +56,7 @@
       "id": "S1",
       "priority": 1,
       "title": "Make CDP connect mode reliable (fix ECONNREFUSED, IPv6 ::1, and ensure debug port is actually listening)",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "CDP endpoint defaults to http://127.0.0.1:<port> and never resolves to ::1.",
         "Bot verifies http://127.0.0.1:<port>/json/version before connecting.",
@@ -68,7 +68,7 @@
       "id": "S2",
       "priority": 2,
       "title": "Add WebSocket debugger URL fallback for CDP",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Bot extracts webSocketDebuggerUrl from /json/version if HTTP CDP fails.",
         "Logs indicate whether HTTP or WebSocket CDP was used.",
