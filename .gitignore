@@ -5,3 +5,7 @@ tmpclaude-*/
 .env
 *.log
 *.png
+tmpclaude-*/
+scripts/ralph/.last-branch
+scripts/ralph/progress.txt
+progress.txt
