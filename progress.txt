@@ -4,6 +4,7 @@
 - Retry logic uses exponential backoff with delays: [500, 1000, 2000, 4000, 8000]ms
 - Utility functions (log, sleep, captureScreenshot) are in `src/util.js`
 - Configuration values are in `src/config.js`, env parsing in `src/env.js`
+- Cookie consent handling is in NavigationManager.handleCookieConsent() - idempotent (tracks `_cookieConsentHandled`)
 
 ---
 
@@ -39,4 +40,22 @@ Thread: https://ampcode.com/threads/T-019bbad6-6c5c-76b7-8b03-e9daa1e0f723
   - Chrome's /json/version endpoint returns webSocketDebuggerUrl which can be used as fallback
   - Playwright's connectOverCDP() works with both HTTP endpoints and WebSocket URLs
   - Always include step name in failure logs and screenshots for debugging
+---
+
+## 2026-01-14T04:55:00Z - S3
+Thread: https://ampcode.com/threads/T-019bbad9-fe78-75ac-ab5a-0df5bf7c3610
+- Made cookie consent handling idempotent using `_cookieConsentHandled` flag
+- Added 36 accept selectors with named identifiers (OneTrust, CookieBot, common patterns)
+- Added 9 decline selectors as fallback
+- Added banner detection to warn when popup is visible but no button found
+- Returns structured result with `{handled, method, selectorsAttempted}`
+- Added `force` option to re-check even if already handled
+- Added `resetCookieConsentState()` for page navigation scenarios
+- Takes screenshot on failure with selector attempts logged
+- Files changed:
+  - src/classes/NavigationManager.js (handleCookieConsent refactor)
+- **Learnings for future iterations:**
+  - Use named selectors (object with `selector` and `name`) for better logging
+  - Track state with instance flags like `_cookieConsentHandled` for idempotency
+  - Return structured results to allow callers to inspect what happened
 ---

@@ -79,7 +79,7 @@
       "id": "S3",
       "priority": 3,
       "title": "Cookie consent must be idempotent and unblock cart/checkout",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Cookie banner is accepted early using multiple fallback selectors.",
         "Repeated calls do not break navigation.",
