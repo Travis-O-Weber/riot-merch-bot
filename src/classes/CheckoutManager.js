@@ -193,10 +193,11 @@ class CheckoutManager {
     await captureScreenshot(this.page, 'order-review');
 
     if (!this.config.FULL_SEND) {
-      log('INFO', '=== STOPPED BEFORE FINAL SUBMIT ===');
-      log('INFO', 'FULL_SEND is disabled - order NOT placed');
-      log('INFO', 'Review the order and submit manually if desired');
-      await captureScreenshot(this.page, 'final-review-stopped');
+      log('INFO', '=== SAFE_STOP_BEFORE_PURCHASE ===');
+      log('INFO', 'FULL_SEND is disabled (FULL_SEND=0) - bot has stopped at final review page');
+      log('INFO', 'Order NOT placed. Review the order and submit manually if desired.');
+      log('INFO', 'To enable automatic order placement, set FULL_SEND=1 in your .env file');
+      await captureScreenshot(this.page, 'safe-stop-final-review');
       return true;
     }
 
