@@ -77,35 +77,33 @@ class RiotMerchBot {
         return;
       }
 
-      // Check if user is signed in
-      const isSignedIn = await this.account.isSignedIn();
+      // Verify signed-in state (required for all modes)
+      if (this.isConnectedMode) {
+        // CONNECT_EXISTING mode: Must be signed in before running
+        // Never waits for manual input - stops safely with clear error
+        const signInCheck = await this.account.verifySignedInOrFail();
 
-      if (isSignedIn) {
-        log('OK', '=== USER IS SIGNED IN ===');
+        if (!signInCheck.success) {
+          log('ERROR', 'Bot cannot proceed without signed-in state');
+          log('INFO', 'Exiting safely. Please sign in and run the bot again.');
+          return;
+        }
+
+        log('OK', '=== USER IS SIGNED IN (CONNECT MODE) ===');
         log('INFO', 'Proceeding with product flow...');
         await this._runProductFlow();
       } else {
-        log('WARN', '=== USER IS NOT SIGNED IN ===');
+        // Launched browser mode: check sign-in state
+        const isSignedIn = await this.account.isSignedIn();
 
-        if (this.isConnectedMode) {
-          log('INFO', '');
-          log('INFO', '>>> Please sign in manually in the browser window <<<');
-          log('INFO', '>>> You have 120 seconds to complete sign-in <<<');
-          log('INFO', '');
-
-          const signedInManually = await this._waitForManualSignIn(120000);
-
-          if (signedInManually) {
-            log('OK', 'Sign-in detected! Proceeding with product flow...');
-            await sleep(2000);
-            await this._runProductFlow();
-          } else {
-            log('ERROR', 'Timed out waiting for sign-in');
-            await captureScreenshot(this.page, 'error-no-signin');
-          }
+        if (isSignedIn) {
+          log('OK', '=== USER IS SIGNED IN ===');
+          log('INFO', 'Proceeding with product flow...');
+          await this._runProductFlow();
         } else {
-          log('ERROR', 'Not signed in and not in connect mode');
-          log('INFO', 'Please use CONNECT_EXISTING=1 and sign in manually');
+          log('ERROR', '=== USER IS NOT SIGNED IN ===');
+          log('ERROR', 'Not signed in and not in CONNECT_EXISTING mode');
+          log('INFO', 'To use the bot, set CONNECT_EXISTING=1 and sign in manually first');
           await captureScreenshot(this.page, 'error-not-signed-in');
         }
       }
@@ -119,33 +117,6 @@ class RiotMerchBot {
     } finally {
       await this.cleanup();
     }
-  }
-
-  /**
-   * Wait for user to manually sign in
-   * @param {number} timeoutMs - Maximum time to wait
-   * @returns {Promise<boolean>}
-   */
-  async _waitForManualSignIn(timeoutMs) {
-    const startTime = Date.now();
-    const checkInterval = 3000;
-
-    while (Date.now() - startTime < timeoutMs) {
-      const isSignedIn = await this.account.isSignedIn();
-      if (isSignedIn) {
-        return true;
-      }
-
-      const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      if (elapsed > 0 && elapsed % 15 === 0) {
-        const remaining = Math.floor((timeoutMs - (Date.now() - startTime)) / 1000);
-        log('INFO', `Waiting for sign-in... ${remaining}s remaining`);
-      }
-
-      await sleep(checkInterval);
-    }
-
-    return false;
   }
 
   /**

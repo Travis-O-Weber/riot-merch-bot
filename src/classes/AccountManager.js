@@ -85,81 +85,157 @@ class AccountManager {
 
   /**
    * Check if user is currently signed in
-   * @returns {Promise<boolean>}
+   * Uses multiple detection strategies for reliability
+   * @returns {Promise<{signedIn: boolean, method: string|null, details: string}>}
    */
-  async isSignedIn() {
-    log('DEBUG', 'Checking if user is signed in');
+  async isSignedInDetailed() {
+    log('DEBUG', 'Checking if user is signed in (detailed)');
 
+    const result = { signedIn: false, method: null, details: '' };
     const currentUrl = this.page.url();
 
-    // If we're on the auth/login page, we're definitely NOT signed in
+    // Strategy 1: Check URL - if on auth/login page, definitely NOT signed in
     if (currentUrl.includes('auth.riotgames.com') || currentUrl.includes('login') || currentUrl.includes('authenticate')) {
+      result.details = 'On login/auth page';
       log('DEBUG', 'On login page - user is NOT signed in');
-      return false;
+      return result;
     }
 
-    // FIRST: Look for sign-in button in HEADER ONLY (indicates user is NOT signed in)
-    // Be strict - only count actual "Sign In" links/buttons, not help text
+    // Strategy 2: Look for explicit "Sign In" button in header (indicates NOT signed in)
     try {
-      const headerSignIn = this.page.locator('header a, header button, nav a, nav button');
-      const count = await headerSignIn.count();
+      const headerElements = this.page.locator('header a, header button, nav a, nav button');
+      const count = await headerElements.count();
 
       for (let i = 0; i < count; i++) {
-        const el = headerSignIn.nth(i);
+        const el = headerElements.nth(i);
         const text = await el.textContent().catch(() => '');
-        // Must be exact "Sign In" or "Log In", not "Can't sign in?" or other variations
+        // Must be exact "Sign In" or "Log In", not "Can't sign in?" or help links
         if (text && /^sign\s*in$|^log\s*in$/i.test(text.trim())) {
           if (await el.isVisible()) {
+            result.details = `Found sign-in button: "${text.trim()}"`;
             log('DEBUG', `Sign in button found in header: "${text.trim()}" - user is NOT signed in`);
-            return false;
+            return result;
           }
         }
       }
-    } catch {
-      // Continue
+    } catch (err) {
+      log('DEBUG', `Error checking header for sign-in button: ${err.message}`);
     }
 
-    // THEN: Look for signed-in indicators
+    // Strategy 3: Look for signed-in indicators (positive detection)
     const signedInIndicators = [
-      // Sign out button visible means signed in
-      () => this.page.locator('header button:has-text("Sign Out"), header a:has-text("Sign Out")'),
-      () => this.page.locator('header button:has-text("Log Out"), header a:has-text("Log Out")'),
-      // "My Account" link means signed in
-      () => this.page.locator('header a:has-text("My Account")'),
-      // Account/profile indicators in header
-      () => this.page.locator('header [class*="account"][class*="logged"], header [class*="signed-in"]'),
+      { locator: () => this.page.locator('header button:has-text("Sign Out"), header a:has-text("Sign Out")'), name: 'Sign Out button' },
+      { locator: () => this.page.locator('header button:has-text("Log Out"), header a:has-text("Log Out")'), name: 'Log Out button' },
+      { locator: () => this.page.locator('header a:has-text("My Account")'), name: 'My Account link' },
+      { locator: () => this.page.locator('header [class*="account"][class*="logged"], header [class*="signed-in"]'), name: 'logged-in class' },
+      { locator: () => this.page.locator('[data-user-logged-in="true"]'), name: 'data-user-logged-in' },
+      { locator: () => this.page.locator('header [aria-label*="account" i]:not([aria-label*="sign in" i])'), name: 'account aria-label' },
+      { locator: () => this.page.locator('header [class*="user-avatar"], header [class*="avatar"]'), name: 'user avatar' },
     ];
 
-    for (const indicator of signedInIndicators) {
+    for (const { locator, name } of signedInIndicators) {
       try {
-        const element = indicator();
+        const element = locator();
         if (await element.count() > 0 && await element.first().isVisible()) {
-          log('DEBUG', 'Signed-in indicator found - user IS signed in');
-          return true;
+          result.signedIn = true;
+          result.method = name;
+          result.details = `Detected via: ${name}`;
+          log('DEBUG', `Signed-in indicator found (${name}) - user IS signed in`);
+          return result;
         }
-      } catch {
-        // Continue
+      } catch (err) {
+        log('DEBUG', `Error checking indicator ${name}: ${err.message}`);
       }
     }
 
-    // If we're on the merch site (not login page) and no sign-in button found,
-    // we might be signed in - check the page more carefully
+    // Strategy 4: On merch site, check for account-related text in header
     if (currentUrl.includes('merch.riotgames.com')) {
-      // Look for any account-related element that suggests logged in
       try {
-        const accountArea = this.page.locator('header').getByText(/my account|sign out|log out/i);
-        if (await accountArea.count() > 0 && await accountArea.first().isVisible()) {
-          log('DEBUG', 'Account text found - user IS signed in');
-          return true;
+        const accountTextPatterns = [/my account/i, /sign out/i, /log out/i, /logout/i];
+        for (const pattern of accountTextPatterns) {
+          const accountArea = this.page.locator('header').getByText(pattern);
+          if (await accountArea.count() > 0 && await accountArea.first().isVisible()) {
+            result.signedIn = true;
+            result.method = `header text: ${pattern}`;
+            result.details = `Found account text matching: ${pattern}`;
+            log('DEBUG', `Account text found (${pattern}) - user IS signed in`);
+            return result;
+          }
         }
-      } catch {
-        // Continue
+      } catch (err) {
+        log('DEBUG', `Error checking account text: ${err.message}`);
       }
     }
 
-    // If we can't determine, assume NOT signed in (safer default)
+    // Strategy 5: Check for absence of sign-in indicators (weaker signal)
+    // If we're on merch site and no explicit sign-in button found, do one more check
+    if (currentUrl.includes('merch.riotgames.com')) {
+      try {
+        // Look for any element that typically only appears when logged in
+        const loggedInOnlyElements = this.page.locator('header [href*="account"], header [href*="orders"], header [href*="wishlist"]');
+        if (await loggedInOnlyElements.count() > 0 && await loggedInOnlyElements.first().isVisible()) {
+          result.signedIn = true;
+          result.method = 'account-related link';
+          result.details = 'Found account/orders/wishlist link in header';
+          log('DEBUG', 'Account-related link found - user likely IS signed in');
+          return result;
+        }
+      } catch (err) {
+        log('DEBUG', `Error checking account links: ${err.message}`);
+      }
+    }
+
+    // Could not positively confirm signed-in state
+    result.details = 'No sign-in button found, but no signed-in indicators either';
     log('DEBUG', 'Could not determine sign-in state - assuming NOT signed in');
-    return false;
+    return result;
+  }
+
+  /**
+   * Check if user is currently signed in (simple boolean)
+   * @returns {Promise<boolean>}
+   */
+  async isSignedIn() {
+    const result = await this.isSignedInDetailed();
+    return result.signedIn;
+  }
+
+  /**
+   * Verify user is signed in, or stop safely with error and screenshot
+   * For CONNECT_EXISTING mode - never requests manual input
+   * @returns {Promise<{success: boolean, error: string|null}>}
+   */
+  async verifySignedInOrFail() {
+    log('INFO', 'Verifying signed-in state (CONNECT_EXISTING mode)...');
+
+    const result = await this.isSignedInDetailed();
+
+    if (result.signedIn) {
+      log('OK', `User is signed in (detected via: ${result.method})`);
+      return { success: true, error: null };
+    }
+
+    // User is NOT signed in - this is an error in CONNECT_EXISTING mode
+    const errorMsg = `NOT SIGNED IN: ${result.details}`;
+    log('ERROR', '===========================================');
+    log('ERROR', '  USER IS NOT SIGNED IN');
+    log('ERROR', '===========================================');
+    log('ERROR', `Detection details: ${result.details}`);
+    log('ERROR', '');
+    log('ERROR', 'In CONNECT_EXISTING mode, you must sign in BEFORE running the bot:');
+    log('ERROR', '  1. Launch Chrome with: 1-launch-chrome.bat');
+    log('ERROR', '  2. Navigate to https://merch.riotgames.com');
+    log('ERROR', '  3. Click "Sign In" and log in to your Riot account');
+    log('ERROR', '  4. Verify you see "Sign Out" or "My Account" in the header');
+    log('ERROR', '  5. Run the bot again: 2-start-bot.bat');
+    log('ERROR', '');
+    log('ERROR', 'The bot will NOT wait for manual sign-in or request any input.');
+    log('ERROR', '===========================================');
+
+    // Take screenshot with clear naming
+    await captureScreenshot(this.page, 'error-not-signed-in-connect-mode');
+
+    return { success: false, error: errorMsg };
   }
 
   /**
