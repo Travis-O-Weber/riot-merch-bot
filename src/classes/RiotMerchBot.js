@@ -35,6 +35,7 @@ class RiotMerchBot {
   /**
    * Main entry point - run the bot
    * CONNECT MODE: Connects to your existing Chrome (you sign in manually first)
+   * Multi-account mode: Iterates through all configured accounts
    */
   async run() {
     log('INFO', '===========================================');
@@ -77,35 +78,14 @@ class RiotMerchBot {
         return;
       }
 
-      // Verify signed-in state (required for all modes)
-      if (this.isConnectedMode) {
-        // CONNECT_EXISTING mode: Must be signed in before running
-        // Never waits for manual input - stops safely with clear error
-        const signInCheck = await this.account.verifySignedInOrFail();
-
-        if (!signInCheck.success) {
-          log('ERROR', 'Bot cannot proceed without signed-in state');
-          log('INFO', 'Exiting safely. Please sign in and run the bot again.');
-          return;
-        }
-
-        log('OK', '=== USER IS SIGNED IN (CONNECT MODE) ===');
-        log('INFO', 'Proceeding with product flow...');
-        await this._runProductFlow();
+      // Check if multi-account mode is configured
+      const accountCount = this.account.getAccountCount();
+      if (accountCount > 0) {
+        log('INFO', `=== MULTI-ACCOUNT MODE: ${accountCount} account(s) configured ===`);
+        await this._runMultiAccountFlow();
       } else {
-        // Launched browser mode: check sign-in state
-        const isSignedIn = await this.account.isSignedIn();
-
-        if (isSignedIn) {
-          log('OK', '=== USER IS SIGNED IN ===');
-          log('INFO', 'Proceeding with product flow...');
-          await this._runProductFlow();
-        } else {
-          log('ERROR', '=== USER IS NOT SIGNED IN ===');
-          log('ERROR', 'Not signed in and not in CONNECT_EXISTING mode');
-          log('INFO', 'To use the bot, set CONNECT_EXISTING=1 and sign in manually first');
-          await captureScreenshot(this.page, 'error-not-signed-in');
-        }
+        // Single session mode (no accounts configured or CONNECT_EXISTING with manual sign-in)
+        await this._runSingleAccountFlow();
       }
 
     } catch (err) {
@@ -116,6 +96,211 @@ class RiotMerchBot {
       throw err;
     } finally {
       await this.cleanup();
+    }
+  }
+
+  /**
+   * Run single account flow (original behavior)
+   * Used when no accounts are configured
+   */
+  async _runSingleAccountFlow() {
+    // Verify signed-in state (required for all modes)
+    if (this.isConnectedMode) {
+      // CONNECT_EXISTING mode: Must be signed in before running
+      // Never waits for manual input - stops safely with clear error
+      const signInCheck = await this.account.verifySignedInOrFail();
+
+      if (!signInCheck.success) {
+        log('ERROR', 'Bot cannot proceed without signed-in state');
+        log('INFO', 'Exiting safely. Please sign in and run the bot again.');
+        return;
+      }
+
+      log('OK', '=== USER IS SIGNED IN (CONNECT MODE) ===');
+      log('INFO', 'Proceeding with product flow...');
+      await this._runProductFlow();
+    } else {
+      // Launched browser mode: check sign-in state
+      const isSignedIn = await this.account.isSignedIn();
+
+      if (isSignedIn) {
+        log('OK', '=== USER IS SIGNED IN ===');
+        log('INFO', 'Proceeding with product flow...');
+        await this._runProductFlow();
+      } else {
+        log('ERROR', '=== USER IS NOT SIGNED IN ===');
+        log('ERROR', 'Not signed in and not in CONNECT_EXISTING mode');
+        log('INFO', 'To use the bot, set CONNECT_EXISTING=1 and sign in manually first');
+        await captureScreenshot(this.page, 'error-not-signed-in');
+      }
+    }
+  }
+
+  /**
+   * Run multi-account flow
+   * Iterates through all configured accounts: verify → flow → sign out → continue
+   */
+  async _runMultiAccountFlow() {
+    const accountCount = this.account.getAccountCount();
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < accountCount; i++) {
+      const account = this.account.getAccount(i);
+      if (!account || !account.username || !account.password) {
+        log('DEBUG', `Skipping blank account at index ${i}`);
+        continue;
+      }
+
+      this.account.setCurrentAccountIndex(i);
+      const maskedUser = this.account.getMaskedUsername();
+
+      log('INFO', '');
+      log('INFO', '===========================================');
+      log('INFO', `  ACCOUNT ${i + 1}/${accountCount}: ${maskedUser}`);
+      log('INFO', '===========================================');
+
+      // Check browser health before each account
+      if (!await this._ensureBrowserHealthy(i)) {
+        log('ERROR', `Browser unhealthy - cannot process account ${i + 1}`);
+        this.account.recordAccountResult('error', 'Browser unhealthy');
+        failCount++;
+        continue;
+      }
+
+      // Handle sign-in for this account
+      const signedIn = await this._handleAccountSignIn(i, account);
+
+      if (!signedIn) {
+        log('WARN', `Account ${i + 1}: Could not sign in - skipping`);
+        this.account.recordAccountResult('error', 'Sign-in failed');
+        failCount++;
+        continue;
+      }
+
+      // Run product flow for this account
+      try {
+        await this._runProductFlow();
+        this.account.recordAccountResult('success', 'Flow completed');
+        successCount++;
+      } catch (err) {
+        log('ERROR', `Account ${i + 1} flow failed: ${err.message}`);
+        this.account.recordAccountResult('error', err.message);
+        failCount++;
+        await this._safeScreenshot(`error-flow-acc${i + 1}`);
+      }
+
+      // Always sign out after processing (sign out is already in _runProductFlow)
+      // Additional sign out attempt if needed
+      const stillSignedIn = await this.account.isSignedIn();
+      if (stillSignedIn) {
+        log('INFO', 'Ensuring sign out is complete...');
+        await this.account.signOut();
+        await sleep(2000);
+      }
+
+      // Navigate back to homepage for next account
+      if (i < accountCount - 1) {
+        log('INFO', 'Preparing for next account...');
+        await this.navigation.goToHomepage();
+        await sleep(1000);
+      }
+    }
+
+    // Log summary
+    log('INFO', '');
+    log('INFO', '===========================================');
+    log('INFO', '     MULTI-ACCOUNT SUMMARY');
+    log('INFO', '===========================================');
+    log('INFO', `  Accounts processed: ${successCount + failCount}`);
+    log('INFO', `  Successful: ${successCount}`);
+    log('INFO', `  Failed: ${failCount}`);
+    log('INFO', '===========================================');
+
+    // Log individual account results
+    const results = this.account.getResults();
+    if (results.length > 0) {
+      log('INFO', '');
+      log('INFO', 'Account Results:');
+      for (const r of results) {
+        const statusIcon = r.status === 'success' ? '✓' : '✗';
+        log('INFO', `  [${statusIcon}] Account ${r.index + 1} (${r.username}): ${r.status} - ${r.message}`);
+      }
+    }
+  }
+
+  /**
+   * Handle sign-in for a specific account
+   * @param {number} accountIndex
+   * @param {{username: string, password: string}} account
+   * @returns {Promise<boolean>}
+   */
+  async _handleAccountSignIn(accountIndex, account) {
+    // For the first account in CONNECT_EXISTING mode, verify existing sign-in
+    if (accountIndex === 0 && this.isConnectedMode) {
+      const signInCheck = await this.account.verifySignedInOrFail();
+      if (signInCheck.success) {
+        log('OK', 'Using existing signed-in session for first account');
+        return true;
+      }
+      log('WARN', 'Not signed in - will attempt programmatic sign-in');
+    }
+
+    // Check if already signed in
+    const alreadySignedIn = await this.account.isSignedIn();
+    if (alreadySignedIn) {
+      // Verify it's the right account or sign out first
+      log('INFO', 'Already signed in - signing out first');
+      await this.account.signOut();
+      await sleep(2000);
+      await this.navigation.goToHomepage();
+      await sleep(1000);
+    }
+
+    // Attempt programmatic sign-in
+    log('INFO', `Attempting sign-in for account ${accountIndex + 1}...`);
+    const signedIn = await this.account.signIn(account.username, account.password);
+
+    if (!signedIn) {
+      log('WARN', `Sign-in failed for account ${accountIndex + 1}`);
+      log('INFO', 'Note: Automated Riot sign-in may be blocked by bot detection');
+      await captureScreenshot(this.page, `error-signin-acc${accountIndex + 1}`);
+      return false;
+    }
+
+    log('OK', `Account ${accountIndex + 1}: Successfully signed in`);
+    return true;
+  }
+
+  /**
+   * Ensure browser is healthy, reinitialize if needed
+   * @param {number} accountIndex - Current account index for logging
+   * @returns {Promise<boolean>}
+   */
+  async _ensureBrowserHealthy(accountIndex) {
+    const isAlive = await isBrowserAlive(this.page);
+
+    if (isAlive) {
+      return true;
+    }
+
+    log('WARN', `Browser unhealthy at account ${accountIndex + 1} - attempting reinitialize`);
+
+    try {
+      // Close existing browser/context
+      await closeBrowser(this.browser, this.context, this.isConnectedMode);
+
+      // Reinitialize
+      await this.initialize();
+
+      // Navigate to homepage
+      await this.navigation.goToHomepage();
+
+      log('OK', 'Browser reinitialized successfully');
+      return true;
+    } catch (err) {
+      log('ERROR', `Failed to reinitialize browser: ${err.message}`);
+      return false;
     }
   }
 
